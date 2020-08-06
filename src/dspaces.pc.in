@@ -1,0 +1,11 @@
+prefix=@DEST_DIR@
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: dspaces 
+Description: N-Dimentional Object Store
+Version: @dspaces_VERSION@
+
+Libs: -L${libdir} @PRIVATE_LIBS@
+Cflags: -I${includedir}

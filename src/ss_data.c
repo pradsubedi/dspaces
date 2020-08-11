@@ -813,6 +813,9 @@ void ls_add_obj(ss_storage *ls, struct obj_data *od)
         struct list_head *bin;
         struct obj_data *od_existing;
 
+        //ABT_rwlock_create(&od->lock);
+        //ABT_rwlock_wrlock(&od->lock);
+
         od_existing = ls_find_no_version(ls, &od->obj_desc);
         if (od_existing) {
                 od_existing->f_free = 1;
@@ -830,6 +833,7 @@ void ls_add_obj(ss_storage *ls, struct obj_data *od)
         /* NOTE: new object comes first in the list. */
         list_add(&od->obj_entry, bin);
         ls->num_obj++;
+        //ABT_rwlock_unlock(&od->lock);
 }
 
 struct obj_data* ls_lookup(ss_storage *ls, char *name)
@@ -935,7 +939,30 @@ ls_find_no_version(ss_storage *ls, obj_descriptor *odsc)
         return NULL;
 }
 
+/*
+//TODO: implement lock
+struct lock_data *get_lock(struct list_head *lock_list, char* name)
+{
+    struct lock_data *lk;
+    list_for_each_entry(lk, lock_list, struct lock_data, lock_entry){
+        if(strcmp(lk->name, name) == 0)
+            return lk;
+    }
+    return NULL;
+}
 
+struct lock_data *create_lock(struct list_head *lock_list, char* name)
+{
+    struct lock_data *lk;
+    lk = malloc(sizeof(lock_data));
+    lk->name = malloc(strlen(name)+1);
+    strcpy(lk->name, name);
+    ABT_rwlock_create(&lk->lock);
+    list_add(&lk->lock_entry, lock_list);
+    return lk;
+
+}
+*/
 
 
 #define ALIGN_ADDR_QUAD_BYTES(a)                                \

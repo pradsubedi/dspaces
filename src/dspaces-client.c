@@ -21,13 +21,19 @@ static enum storage_type st = column_major;
 struct dspaces_client {
     margo_instance_id mid;
     hg_id_t put_id;
+    hg_id_t put_local_id;
     hg_id_t get_id;
     hg_id_t query_id;
     hg_id_t ss_id;
     struct dc_gspace *dcg;
     ssg_group_id_t gid;
+    int local_put_indicator; // used during finalize
+
     
 };
+
+DECLARE_MARGO_RPC_HANDLER(get_rpc);
+static void get_rpc(hg_handle_t h);
 
 //dynamic load balancing based on the number of clients
 //round robin fashion
@@ -192,6 +198,7 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
 
     if(flag == HG_TRUE) { /* RPCs already registered */
         margo_registered_name(client->mid, "put_rpc",                   &client->put_id,                   &flag);
+        margo_registered_name(client->mid, "put_local_rpc",                   &client->put_local_id,                   &flag);
         margo_registered_name(client->mid, "get_rpc",                   &client->get_id,                   &flag);
         margo_registered_name(client->mid, "query_rpc",                   &client->query_id,                   &flag);
         margo_registered_name(client->mid, "ss_rpc",                   &client->ss_id,                   &flag);
@@ -200,8 +207,11 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
 
         client->put_id =
             MARGO_REGISTER(client->mid, "put_rpc", bulk_gdim_t, bulk_out_t, NULL);
+        client->put_local_id =
+            MARGO_REGISTER(client->mid, "put_local_rpc", odsc_gdim_t, bulk_out_t, NULL);
         client->get_id =
-            MARGO_REGISTER(client->mid, "get_rpc", bulk_in_t, bulk_out_t, NULL);
+            MARGO_REGISTER(client->mid, "get_rpc", bulk_in_t, bulk_out_t, get_rpc);
+        margo_register_data(client->mid, client->get_id, (void*)client, NULL);
         client->query_id =
             MARGO_REGISTER(client->mid, "query_rpc", odsc_gdim_t, odsc_list_t, NULL);
         client->ss_id =
@@ -217,6 +227,10 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
         return dspaces_ERR_ALLOCATION;
 
     get_ss_info(client);
+    fprintf(stderr, "Total max versions on the client side is %d\n", client->dcg->max_versions);
+
+    client->dcg->ls = ls_alloc(client->dcg->max_versions);
+    client->local_put_indicator = 0;
 
     *c = client;
 
@@ -226,14 +240,16 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
 
 int client_finalize(dspaces_client_t client)
 {
-
+    if(client->local_put_indicator == 1)
+        margo_wait_for_finalize(client->mid);
+    
     int ret = ssg_group_leave(client->gid);
     assert(ret == SSG_SUCCESS);
 
     free_gdim_list(&client->dcg->gdim_list);
     free(client->dcg->srv_ids);
+    ls_free(client->dcg->ls);
     free(client->dcg);
-
 
     margo_finalize(client->mid);
 
@@ -255,7 +271,6 @@ void dspaces_define_gdim (dspaces_client_t client,
 
 
 }
-
 
 
 int dspaces_put (dspaces_client_t client,
@@ -391,7 +406,7 @@ static int get_data(dspaces_client_t client, int num_odscs, obj_descriptor req_o
         margo_get_output(hndl[i], &resp);
         margo_free_output(hndl[i], &resp);
         margo_destroy(hndl[i]);
-
+        //copy received data into user return buffer
         ssd_copy(return_od, od[i]);
         obj_data_free(od[i]);
     }
@@ -399,6 +414,90 @@ static int get_data(dspaces_client_t client, int num_odscs, obj_descriptor req_o
     free(serv_req);
     free(in);
     free(return_od);
+
+}
+
+
+int dspaces_put_local (dspaces_client_t client,
+        const char *var_name,
+        unsigned int ver, int elem_size,
+        int ndim, uint64_t *lb, uint64_t *ub, 
+        void *data)
+{
+    hg_return_t hret;
+    int ret = dspaces_SUCCESS;
+    hg_handle_t handle;
+
+    client->local_put_indicator = 1;
+
+    obj_descriptor odsc = {
+            .version = ver, .owner = ssg_get_self_id(client->mid), 
+            .st = st,
+            .size = elem_size,
+            .bb = {.num_dims = ndim,}
+    };
+
+    memset(odsc.bb.lb.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
+    memset(odsc.bb.ub.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
+
+    memcpy(odsc.bb.lb.c, lb, sizeof(uint64_t)*ndim);
+    memcpy(odsc.bb.ub.c, ub, sizeof(uint64_t)*ndim);
+
+    strncpy(odsc.name, var_name, sizeof(odsc.name)-1);
+    odsc.name[sizeof(odsc.name)-1] = '\0';
+
+    odsc_gdim_t in;
+    bulk_out_t out;
+    struct obj_data *od;
+    od = obj_data_alloc_with_data(&odsc, data);
+    //memcpy(&od->gdim, &odsc_gdim, sizeof(struct global_dimension));
+
+    //struct global_dimension odsc_gdim;
+    set_global_dimension(&(client->dcg->gdim_list), var_name, &(client->dcg->default_gdim),
+                         &od->gdim);
+
+    
+    //memcpy(&od->data, data, (elem_size)*bbox_volume(&odsc.bb));
+
+    ls_add_obj(client->dcg->ls, od);
+
+
+    in.odsc_gdim.size = sizeof(odsc);
+    in.odsc_gdim.raw_odsc = (char*)(&odsc);
+    in.odsc_gdim.gdim_size = sizeof(struct global_dimension);
+    in.odsc_gdim.raw_gdim = (char*)(&od->gdim);
+
+    fprintf(stderr, "sending object information %s \n", obj_desc_sprint(&odsc));
+    
+    hg_addr_t server_addr = get_server_address(client);
+    /* create handle */
+    hret = margo_create( client->mid,
+            server_addr,
+            client->put_local_id,
+            &handle);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"[dspaces] margo_create() failed in dspaces_put()\n");
+        return dspaces_ERR_MERCURY;
+    }
+
+    hret = margo_forward(handle, &in);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"[dspaces] margo_forward() failed in dspaces_put() \n");
+        margo_destroy(handle);
+        return dspaces_ERR_MERCURY;
+    }
+
+    hret = margo_get_output(handle, &out);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"[dspaces] margo_get_output() failed in dspaces_put()\n");
+        margo_destroy(handle);
+        return dspaces_ERR_MERCURY;
+    }
+
+    ret = out.ret;
+    margo_free_output(handle, &out);
+    margo_destroy(handle);
+    return ret;
 
 }
 
@@ -473,11 +572,84 @@ int dspaces_get (dspaces_client_t client,
     //alloc data for each obj_descriptor
 
 
-
-    get_data(client, num_odscs, odsc, odsc_tab, data);
-
-
-
-    //obj_assemble
+    if(num_odscs!=0)
+        get_data(client, num_odscs, odsc, odsc_tab, data);
 
 }
+
+static void get_rpc(hg_handle_t handle)
+{
+    hg_return_t hret;
+    bulk_in_t in;
+    bulk_out_t out;
+    hg_bulk_t bulk_handle;
+    fprintf(stderr, "Received rpc to get data\n");
+
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_client_t client = (dspaces_client_t)margo_registered_data(mid, info->id);
+
+    hret = margo_get_input(handle, &in);
+    assert(hret == HG_SUCCESS); 
+
+    obj_descriptor in_odsc;
+    memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
+
+    fprintf(stderr, "%s\n", obj_desc_sprint(&in_odsc));
+     
+    struct obj_data *od, *from_obj;
+
+    from_obj = ls_find(client->dcg->ls, &in_odsc);
+    //fprintf(stderr, "After ls_find\n");
+    if(!from_obj)
+        fprintf(stderr, "Object not found in local storage\n");
+
+    od = obj_data_alloc(&in_odsc);
+    //fprintf(stderr, "After obj_data_alloc\\n");
+    if(!od)
+        fprintf(stderr, "Object unable to allocate\n");
+
+    //fprintf(stderr, "To obj %s\n", obj_desc_sprint(&od->obj_desc));
+    //fprintf(stderr, "From obj %s\n", obj_desc_sprint(&from_obj->obj_desc));
+    if(from_obj->data == NULL)
+        fprintf(stderr, "Data is not allocated for from obj\n");
+
+    //fprintf(stderr, "Before ssd_copy\n");
+    ssd_copy(od, from_obj);
+    fprintf(stderr, "After ssd_copy\n");
+    
+    hg_size_t size = (in_odsc.size)*bbox_volume(&(in_odsc.bb));
+    void *buffer = (void*) od->data;
+
+    hret = margo_bulk_create(mid, 1, (void**)&buffer, &size,
+                HG_BULK_READ_ONLY, &bulk_handle);
+
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"Error in margo_bulk_create()\n");
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        margo_free_input(handle, &in);
+        margo_destroy(handle);
+        return;
+    }
+
+    hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
+            bulk_handle, 0, size);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"Error in margo_bulk_transfer()\n");
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        margo_free_input(handle, &in);
+        margo_bulk_free(bulk_handle);
+        margo_destroy(handle);
+        return;
+    }
+    margo_bulk_free(bulk_handle);
+    out.ret = dspaces_SUCCESS;
+    obj_data_free(od);
+    margo_respond(handle, &out);
+    margo_free_input(handle, &in);
+    margo_destroy(handle);
+}
+DEFINE_MARGO_RPC_HANDLER(get_rpc)

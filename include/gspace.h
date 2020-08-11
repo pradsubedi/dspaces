@@ -49,13 +49,13 @@ struct ds_gspace {
         struct list_head        sspace_list;
 
         /* Pending object descriptors request list. */
-        struct list_head        obj_desc_req_list;
+        //struct list_head        obj_desc_req_list;
 
         /* Pending object data request list. */
-        struct list_head        obj_data_req_list;
+        //struct list_head        obj_data_req_list;
 
         /* List of allocated locks. */
-        struct list_head        locks_list;
+        //struct list_head        locks_list;
 
         int rank;
         int size_sp;
@@ -84,6 +84,8 @@ struct dc_gspace {
         int    max_versions; 
         int size_sp;
         ssg_member_id_t *srv_ids;
+        //for dimes like client storage
+        ss_storage       *ls;
         
 };
 

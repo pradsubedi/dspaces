@@ -15,6 +15,7 @@
 #include <mercury_bulk.h>
 #include <mercury_atomic.h>
 #include <mercury_macros.h>
+#include <abt.h>
 
 #define MAX_VERSIONS 10
 
@@ -62,6 +63,9 @@ struct obj_data {
 
         /* Flag to mark if we should free this data object. */
         unsigned int            f_free:1;
+
+        //guarantee read and write locks
+        ABT_rwlock lock;
 };
 
 
@@ -166,7 +170,6 @@ typedef struct{
         struct global_dimension default_gdim;
         int rank;
 } ss_info_hdr;
-
 
 
 static inline hg_return_t hg_proc_odsc_hdr(hg_proc_t proc, void *arg)
@@ -299,6 +302,10 @@ struct gdim_list_entry* lookup_gdim_list(struct list_head *gdim_list, const char
 void free_gdim_list(struct list_head *gdim_list);
 void set_global_dimension(struct list_head *gdim_list, const char *var_name,
             const struct global_dimension *default_gdim, struct global_dimension *gdim);
+
+struct lock_data *get_lock(struct list_head *list, char* name);
+struct lock_data *create_lock(struct list_head *list, char* name);
+
 
 
 

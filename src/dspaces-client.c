@@ -12,11 +12,13 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include "ss_data.h"
 #include "dspaces-client.h"
 #include "gspace.h"
 
 static enum storage_type st = column_major;
+pthread_mutex_t ls_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct dspaces_client {
     margo_instance_id mid;
@@ -25,6 +27,7 @@ struct dspaces_client {
     hg_id_t get_id;
     hg_id_t query_id;
     hg_id_t ss_id;
+    hg_id_t drain_id;
     struct dc_gspace *dcg;
     ssg_group_id_t gid;
     int local_put_indicator; // used during finalize
@@ -34,6 +37,8 @@ struct dspaces_client {
 
 DECLARE_MARGO_RPC_HANDLER(get_rpc);
 static void get_rpc(hg_handle_t h);
+DECLARE_MARGO_RPC_HANDLER(drain_rpc);
+static void drain_rpc(hg_handle_t h);
 
 //dynamic load balancing based on the number of clients
 //round robin fashion
@@ -176,7 +181,7 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
     dspaces_client_t client = (dspaces_client_t)calloc(1, sizeof(*client));
     if(!client) return dspaces_ERR_ALLOCATION;
 
-    client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 0);
+    client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 2);
     assert(client->mid);
    
     ssg_group_id_t gid;
@@ -202,6 +207,7 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
         margo_registered_name(client->mid, "get_rpc",                   &client->get_id,                   &flag);
         margo_registered_name(client->mid, "query_rpc",                   &client->query_id,                   &flag);
         margo_registered_name(client->mid, "ss_rpc",                   &client->ss_id,                   &flag);
+        margo_registered_name(client->mid, "drain_rpc",                   &client->drain_id,                   &flag);
    
     } else {
 
@@ -216,6 +222,9 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
             MARGO_REGISTER(client->mid, "query_rpc", odsc_gdim_t, odsc_list_t, NULL);
         client->ss_id =
             MARGO_REGISTER(client->mid, "ss_rpc", void, ss_information, NULL);
+        client->drain_id =
+            MARGO_REGISTER(client->mid, "drain_rpc", bulk_in_t, bulk_out_t, drain_rpc);
+        margo_register_data(client->mid, client->drain_id, (void*)client, NULL);
 
     }
     //now do dcg_alloc and store gid
@@ -458,9 +467,10 @@ int dspaces_put_local (dspaces_client_t client,
 
     
     //memcpy(&od->data, data, (elem_size)*bbox_volume(&odsc.bb));
-
+    pthread_mutex_lock(&ls_mutex);  
     ls_add_obj(client->dcg->ls, od);
-
+    fprintf(stderr, "Added into local_storage\n");
+    pthread_mutex_unlock(&ls_mutex);  
 
     in.odsc_gdim.size = sizeof(odsc);
     in.odsc_gdim.raw_odsc = (char*)(&odsc);
@@ -653,3 +663,78 @@ static void get_rpc(hg_handle_t handle)
     margo_destroy(handle);
 }
 DEFINE_MARGO_RPC_HANDLER(get_rpc)
+
+static void drain_rpc(hg_handle_t handle)
+{
+    hg_return_t hret;
+    bulk_in_t in;
+    bulk_out_t out;
+    hg_bulk_t bulk_handle;
+    fprintf(stderr, "Received rpc to drain data\n");
+
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_client_t client = (dspaces_client_t)margo_registered_data(mid, info->id);
+
+    hret = margo_get_input(handle, &in);
+    assert(hret == HG_SUCCESS); 
+
+    obj_descriptor in_odsc;
+    memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
+
+    fprintf(stderr, "%s\n", obj_desc_sprint(&in_odsc));
+     
+    struct obj_data *from_obj;
+
+    from_obj = ls_find(client->dcg->ls, &in_odsc);
+    //fprintf(stderr, "After ls_find\n");
+    if(!from_obj){
+        fprintf(stderr, "Object not found in client's local storage.\n Make sure MAX version is set appropriately in dataspaces.conf\n");
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        return; 
+    }
+
+    
+    hg_size_t size = (in_odsc.size)*bbox_volume(&(in_odsc.bb));
+    void *buffer = (void*) from_obj->data;
+
+    hret = margo_bulk_create(mid, 1, (void**)&buffer, &size,
+                HG_BULK_READ_ONLY, &bulk_handle);
+
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"Error in margo_bulk_create()\n");
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        margo_free_input(handle, &in);
+        margo_destroy(handle);
+        return;
+    }
+
+    hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
+            bulk_handle, 0, size);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"Error in margo_bulk_transfer()\n");
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        margo_free_input(handle, &in);
+        margo_bulk_free(bulk_handle);
+        margo_destroy(handle);
+        return;
+    }
+    margo_bulk_free(bulk_handle);
+     
+
+    out.ret = dspaces_SUCCESS;
+    margo_respond(handle, &out);
+    margo_free_input(handle, &in);
+    margo_destroy(handle);
+    //delete object from local storage
+    fprintf(stderr, "Finished draining %s\n", obj_desc_sprint(&from_obj->obj_desc)); 
+    pthread_mutex_lock(&ls_mutex);  
+    ls_try_remove_free(client->dcg->ls, from_obj);
+    pthread_mutex_unlock(&ls_mutex);
+    
+}
+DEFINE_MARGO_RPC_HANDLER(drain_rpc)

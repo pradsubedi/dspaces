@@ -866,10 +866,6 @@ void ls_try_remove_free(ss_storage *ls, struct obj_data *od)
            obj_data_alloc(), i.e., the data follows the structure.  */
         if (od->refcnt == 0) {
                 ls_remove(ls, od);
-                if (od->data != od+1) {
-                        fprintf(stderr, "'%s()': we are about to free an object " 
-                              "with external allocation.\n", __func__);
-                }
                 obj_data_free(od);
         }
 }

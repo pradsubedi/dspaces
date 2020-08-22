@@ -42,7 +42,7 @@ configure_file (dspaces-config.cmake.in dspaces-config.cmake @ONLY)
 
 # some bits for the pkg-config file
 set (DEST_DIR "${CMAKE_INSTALL_PREFIX}")
-set (PRIVATE_LIBS "-ldspaces")
+set (PRIVATE_LIBS "-ldspaces -lpthread")
 configure_file ("dspaces.pc.in" "dspaces.pc" @ONLY)
 
 #

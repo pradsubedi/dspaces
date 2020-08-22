@@ -48,8 +48,8 @@ struct ds_gspace {
         /* List of dynamically added shared space. */ 
         struct list_head        sspace_list;
 
-        /* Pending object descriptors request list. */
-        //struct list_head        obj_desc_req_list;
+        /* Pending object descriptors for draining. */
+        struct list_head        obj_desc_drain_list;
 
         /* Pending object data request list. */
         //struct list_head        obj_data_req_list;

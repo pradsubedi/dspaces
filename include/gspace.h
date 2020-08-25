@@ -32,7 +32,6 @@
 #ifndef __GSPACE_H_
 #define __GSPACE_H_
 
-#include <ssg.h>
 #include "ss_data.h"
 
 
@@ -51,16 +50,10 @@ struct ds_gspace {
         /* Pending object descriptors for draining. */
         struct list_head        obj_desc_drain_list;
 
-        /* Pending object data request list. */
-        //struct list_head        obj_data_req_list;
-
-        /* List of allocated locks. */
-        //struct list_head        locks_list;
 
         int rank;
         int size_sp;
-        ssg_group_id_t gid;
-        ssg_group_id_t *srv_ids;
+        char **server_address;
         
 };
 
@@ -82,8 +75,6 @@ struct dc_gspace {
 
         enum sspace_hash_version    hash_version;
         int    max_versions; 
-        int size_sp;
-        ssg_member_id_t *srv_ids;
         //for dimes like client storage
         ss_storage       *ls;
         

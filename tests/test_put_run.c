@@ -161,13 +161,14 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 
 	double tm_st, tm_end;
 	tm_st = timer_read(&timer_);
+
+	MPI_Comm_rank(gcomm_, &rank_);
 	
-    ret = client_init(listen_addr_str, &ndcl);
+    ret = client_init(listen_addr_str, rank_, &ndcl);
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
 
-	MPI_Comm_rank(gcomm_, &rank_);
     MPI_Comm_size(gcomm_, &nproc_);
 
 

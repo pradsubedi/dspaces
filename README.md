@@ -5,7 +5,6 @@
 * mercury (git clone --recurse-submodules https://github.com/mercury-hpc/mercury.git)
 * argobots (git clone https://github.com/pmodels/argobots.git)
 * margo (git clone https://xgitlab.cels.anl.gov/sds/margo.git)
-* ssg 
 
 ## Building
 Create a build directory

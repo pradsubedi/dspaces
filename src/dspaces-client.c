@@ -29,7 +29,9 @@ struct dspaces_client {
     hg_id_t ss_id;
     hg_id_t drain_id;
     struct dc_gspace *dcg;
-    ssg_group_id_t gid;
+    char **server_address;
+    int size_sp;
+    int rank;
     int local_put_indicator; // used during finalize
 
     
@@ -40,29 +42,14 @@ static void get_rpc(hg_handle_t h);
 DECLARE_MARGO_RPC_HANDLER(drain_rpc);
 static void drain_rpc(hg_handle_t h);
 
-//dynamic load balancing based on the number of clients
 //round robin fashion
-//based on how many clients are currently connected to each server
+//based on how many clients processes are connected to the server
 static hg_addr_t get_server_address(dspaces_client_t client){
-
-    int self_rank = ssg_get_group_self_rank(client->gid);
-    
-    int peer_id = self_rank % client->dcg->size_sp;
-    fprintf(stderr, "Self rank is %d, with peer_id %d\n", self_rank, peer_id);
-    hg_addr_t server_addr = ssg_get_group_member_addr(client->gid, client->dcg->srv_ids[peer_id]);
-    for (int i = 0; i < client->dcg->size_sp; ++i)
-    {
-        fprintf(stderr, "server addr %d is %lu \n", i, client->dcg->srv_ids[i]);
-    }
-
-    char *my_addr_str = NULL;
-    hg_size_t my_addr_size;
-    margo_addr_to_string(client->mid, NULL, &my_addr_size, server_addr);
-    my_addr_str = malloc(my_addr_size);
-    margo_addr_to_string(client->mid, my_addr_str, &my_addr_size, server_addr);
-    fprintf(stderr, "server_address being connected is %s\n", my_addr_str);
-
-    return server_addr;
+ 
+    int peer_id = client->rank % client->size_sp;
+    hg_addr_t svr_addr;
+    margo_addr_lookup(client->mid, client->server_address[peer_id], &svr_addr);
+    return svr_addr;
 
 }
 
@@ -77,11 +64,7 @@ static int get_ss_info(dspaces_client_t client){
     char *my_addr_str = NULL;
 
     hg_addr_t server_addr = get_server_address(client);
-    margo_addr_to_string(client->mid, NULL, &my_addr_size, server_addr);
-    my_addr_str = malloc(my_addr_size);
-    margo_addr_to_string(client->mid, my_addr_str, &my_addr_size, server_addr);
 
-    fprintf(stderr, "server_address to send ss_info rpc is %s\n", my_addr_str);
     /* create handle */
     hret = margo_create(client->mid, server_addr, client->ss_id, &handle);
     if(hret != HG_SUCCESS) {
@@ -114,6 +97,7 @@ static int get_ss_info(dspaces_client_t client){
 
     margo_free_output(handle, &out);
     margo_destroy(handle);
+    margo_addr_free(client->mid, server_addr);
     return ret;
 
 }
@@ -129,72 +113,103 @@ static struct dc_gspace * dcg_alloc(dspaces_client_t client)
 
         INIT_LIST_HEAD(&dcg_l->locks_list);
         init_gdim_list(&dcg_l->gdim_list);    
-        dcg_l->hash_version = ssd_hash_version_v1; // set default hash version
-        
-
-        //now read from file to update size_sp and srv_ids
-
-        char* file_name = "servids.0";
-        int fd = open(file_name, O_RDONLY);
-        struct stat st;
-        if (fd == -1)
-        {
-            fprintf(stderr, "Error: Unable to open config file %s for server_address list\n",
-                file_name);
-            goto err_out;
-        }
-        /* get file size and allocate a buffer to store it */
-        int ret = fstat(fd, &st);
-        if (ret == -1)
-        {
-            fprintf(stderr, "Error: Unable to stat config file %s for server_address list\n",
-                file_name);
-            goto err_out;
-        }
-        dcg_l->srv_ids = malloc(st.st_size);
-        if (dcg_l->srv_ids == NULL) goto err_out;
-
-        /* load it all in one fell swoop */
-        int rd_buf_size = read(fd, dcg_l->srv_ids, st.st_size);
-        if (rd_buf_size != st.st_size)
-        {
-            fprintf(stderr, "Error: Unable to stat config file %s for server_address list\n",
-                file_name);
-            goto err_out;
-        }
-        close(fd);
-        dcg_l->size_sp = rd_buf_size/sizeof(ssg_member_id_t);
-        fprintf(stderr, "Size of server is %d\n", dcg_l->size_sp);
-
-
+        dcg_l->hash_version = ssd_hash_version_v1; // set default hash versio
         return dcg_l;
+
  err_out:
         fprintf(stderr, "'%s()': failed.\n", __func__);
         return NULL;
 }
 
-int client_init(char *listen_addr_str, dspaces_client_t* c)
+
+static int build_address(dspaces_client_t client){
+    /* open config file for reading */
+    int ret;
+    struct stat st;
+    char *rd_buf = NULL;
+    ssize_t rd_buf_size;
+    char *tok;
+    void *addr_str_buf = NULL;
+    int addr_str_buf_len = 0, num_addrs = 0;
+    int fd;
+
+    char* file_name = "servids.0";
+    fd = open(file_name, O_RDONLY);
+    if (fd == -1)
+    {
+        fprintf(stderr, "Error: Unable to open config file %s for server_address list\n",
+            file_name);
+        goto fini;
+    }
+
+    /* get file size and allocate a buffer to store it */
+    ret = fstat(fd, &st);
+    if (ret == -1)
+    {
+        fprintf(stderr, "Error: Unable to stat config file %s for server_address list\n",
+            file_name);
+        goto fini;
+    }
+    ret = -1;
+    rd_buf = malloc(st.st_size);
+    if (rd_buf == NULL) goto fini;
+
+    /* load it all in one fell swoop */
+    rd_buf_size = read(fd, rd_buf, st.st_size);
+    if (rd_buf_size != st.st_size)
+    {
+        fprintf(stderr, "Error: Unable to stat config file %s for server_address list\n",
+            file_name);
+        goto fini;
+    }
+    rd_buf[rd_buf_size]='\0';
+
+    // strtok the result - each space-delimited address is assumed to be
+    // a unique mercury address
+
+    tok = strtok(rd_buf, "\r\n\t ");
+    if (tok == NULL) goto fini;
+
+    // build up the address buffer
+    addr_str_buf = malloc(rd_buf_size);
+    if (addr_str_buf == NULL) goto fini;
+    do
+    {
+        int tok_size = strlen(tok);
+        memcpy((char*)addr_str_buf + addr_str_buf_len, tok, tok_size+1);
+        addr_str_buf_len += tok_size+1;
+        num_addrs++;
+        tok = strtok(NULL, "\r\n\t ");
+    } while (tok != NULL);
+    if (addr_str_buf_len != rd_buf_size)
+    {
+        // adjust buffer size if our initial guess was wrong
+        fprintf(stderr, "Read size and buffer_len are not equal\n");
+        void *tmp = realloc(addr_str_buf, addr_str_buf_len);
+        if (tmp == NULL) goto fini;
+        addr_str_buf = tmp;
+    }
+    free(rd_buf);
+   
+    /* set up address string array for group members */
+    client->server_address = (char **)addr_str_buf_to_list(addr_str_buf, num_addrs);
+    client->size_sp = num_addrs;
+    ret = 0;
+
+fini:
+    return ret;
+}
+
+int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
 {   
-    int ret = ssg_init();
-    assert(ret == SSG_SUCCESS);
     
     dspaces_client_t client = (dspaces_client_t)calloc(1, sizeof(*client));
     if(!client) return dspaces_ERR_ALLOCATION;
 
-    client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 2);
+    client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(client->mid);
-   
-    ssg_group_id_t gid;
 
-    //join the server ssg_group
-    int num_addrs = 1;
-    ret = ssg_group_id_load("dspaces.ssg", &num_addrs, &gid);
-    assert(ret == SSG_SUCCESS);
-
-    ret = ssg_group_join(client->mid, gid, NULL, NULL);
-    assert(ret == SSG_SUCCESS);
-
-    client->gid = gid;
+    client->rank = rank;
 
     /* check if RPCs have already been registered */
     hg_bool_t flag;
@@ -230,10 +245,11 @@ int client_init(char *listen_addr_str, dspaces_client_t* c)
     //now do dcg_alloc and store gid
 
     client->dcg = dcg_alloc(client);
-    assert(ret == 0);
 
     if(!(client->dcg))
         return dspaces_ERR_ALLOCATION;
+
+    build_address(client);
 
     get_ss_info(client);
     fprintf(stderr, "Total max versions on the client side is %d\n", client->dcg->max_versions);
@@ -251,21 +267,16 @@ int client_finalize(dspaces_client_t client)
 {
     if(client->local_put_indicator == 1)
         margo_wait_for_finalize(client->mid);
-    
-    int ret = ssg_group_leave(client->gid);
-    assert(ret == SSG_SUCCESS);
 
     free_gdim_list(&client->dcg->gdim_list);
-    free(client->dcg->srv_ids);
+    free(client->server_address[0]);
+    free(client->server_address);
     ls_free(client->dcg->ls);
     free(client->dcg);
 
     margo_finalize(client->mid);
 
     free(client);
-
-    ret = ssg_finalize();
-    assert(ret == SSG_SUCCESS);
 
     return dspaces_SUCCESS;
 }
@@ -293,7 +304,7 @@ int dspaces_put (dspaces_client_t client,
     hg_handle_t handle;
 
     obj_descriptor odsc = {
-            .version = ver, .owner = 0, 
+            .version = ver, .owner = {0}, 
             .st = st,
             .size = elem_size,
             .bb = {.num_dims = ndim,}
@@ -361,8 +372,8 @@ int dspaces_put (dspaces_client_t client,
     ret = out.ret;
     margo_free_output(handle, &out);
     margo_bulk_free(in.handle);
-
     margo_destroy(handle);
+    margo_addr_free(client->mid, server_addr);
 	return ret;
 
 }
@@ -392,7 +403,7 @@ static int get_data(dspaces_client_t client, int num_odscs, obj_descriptor req_o
                                 HG_BULK_WRITE_ONLY, &in[i].handle);
 
         hg_addr_t server_addr;
-        server_addr = ssg_get_group_member_addr(client->gid, odsc_tab[i].owner);
+        margo_addr_lookup(client->mid, odsc_tab[i].owner, &server_addr);
 
         hg_handle_t handle;
         margo_create( client->mid,
@@ -405,6 +416,7 @@ static int get_data(dspaces_client_t client, int num_odscs, obj_descriptor req_o
         margo_iforward(handle, &in[i], &req); 
         hndl[i] = handle;
         serv_req[i] = req;
+        margo_addr_free(client->mid, server_addr);
     }
 
     struct obj_data *return_od = obj_data_alloc_no_data(&req_obj, data);
@@ -440,11 +452,18 @@ int dspaces_put_local (dspaces_client_t client,
     client->local_put_indicator = 1;
 
     obj_descriptor odsc = {
-            .version = ver, .owner = ssg_get_self_id(client->mid), 
+            .version = ver, 
             .st = st,
             .size = elem_size,
             .bb = {.num_dims = ndim,}
     };
+
+    hg_addr_t owner_addr;
+    size_t owner_addr_size = 128;
+
+    margo_addr_self(client->mid, &owner_addr);
+    margo_addr_to_string(client->mid, odsc.owner, &owner_addr_size, owner_addr);
+    margo_addr_free(client->mid, owner_addr);
 
     memset(odsc.bb.lb.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
     memset(odsc.bb.ub.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
@@ -507,6 +526,7 @@ int dspaces_put_local (dspaces_client_t client,
     ret = out.ret;
     margo_free_output(handle, &out);
     margo_destroy(handle);
+    //margo_addr_free(client->mid, server_addr);
     return ret;
 
 }
@@ -522,7 +542,7 @@ int dspaces_get (dspaces_client_t client,
     hg_handle_t handle;
 
     obj_descriptor odsc = {
-            .version = ver, .owner = 0, 
+            .version = ver, .owner = {0}, 
             .st = st,
             .size = elem_size,
             .bb = {.num_dims = ndim,}
@@ -570,6 +590,7 @@ int dspaces_get (dspaces_client_t client,
     memcpy(odsc_tab, out.odsc_list.raw_odsc, out.odsc_list.size);
     margo_free_output(handle, &out);
     margo_destroy(handle);
+    
 
 
     fprintf(stderr, "Finished query\n");
@@ -584,6 +605,8 @@ int dspaces_get (dspaces_client_t client,
 
     if(num_odscs!=0)
         get_data(client, num_odscs, odsc, odsc_tab, data);
+
+    margo_addr_free(client->mid, server_addr);
 
 }
 

@@ -12,7 +12,6 @@
 #include <dspaces-common.h>
 #include <assert.h>
 #include <stdio.h>
-#include <ssg.h>
 #include <mpi.h>
 
 #if defined(__cplusplus)

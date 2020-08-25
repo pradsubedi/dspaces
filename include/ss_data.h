@@ -15,7 +15,7 @@
 #include <mercury_bulk.h>
 #include <mercury_atomic.h>
 #include <mercury_macros.h>
-#include <abt.h>
+#include <margo.h>
 
 #define MAX_VERSIONS 10
 
@@ -31,7 +31,7 @@ typedef struct{
 
         enum storage_type       st;
 
-        uint64_t                owner;
+        char                owner[128];
         unsigned int            version;
 
         /* Global bounding box descriptor. */
@@ -64,8 +64,7 @@ struct obj_data {
         /* Flag to mark if we should free this data object. */
         unsigned int            f_free:1;
 
-        //guarantee read and write locks
-        ABT_rwlock lock;
+
 };
 
 
@@ -305,6 +304,8 @@ void set_global_dimension(struct list_head *gdim_list, const char *var_name,
 
 struct lock_data *get_lock(struct list_head *list, char* name);
 struct lock_data *create_lock(struct list_head *list, char* name);
+
+char ** addr_str_buf_to_list(char * buf, int num_addrs);
 
 
 

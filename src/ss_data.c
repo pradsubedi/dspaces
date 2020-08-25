@@ -730,7 +730,7 @@ char *obj_desc_sprint(obj_descriptor *odsc)
 
     str = alloc_sprintf("obj_descriptor = {\n"
                 "\t.name = %s,\n"
-                "\t.owner = %lu,\n"
+                "\t.owner = %s,\n"
                 "\t.version = %d\n"
                 "\t.bb = ", odsc->name, odsc->owner, odsc->version);
     str = str_append_const(str_append(str, bbox_sprint(&odsc->bb)), "}\n");
@@ -1394,5 +1394,21 @@ int global_dimension_equal(const struct global_dimension* gdim1,
     }
 
     return 1;
+}
+
+char ** addr_str_buf_to_list(
+    char * buf, int num_addrs)
+{
+    int i;
+    char **ret = malloc(num_addrs * sizeof(*ret));
+    if (ret == NULL) return NULL;
+
+    ret[0] = (char *)buf;
+    for (i = 1; i < num_addrs; i++)
+    {
+        char * a = ret[i-1];
+        ret[i] = a + strlen(a) + 1;
+    }
+    return ret;
 }
 

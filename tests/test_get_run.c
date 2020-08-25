@@ -182,16 +182,17 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 	double tm_st, tm_end;
 	tm_st = timer_read(&timer_);
 	
+	MPI_Comm_rank(gcomm_, &rank_);
+    MPI_Comm_size(gcomm_, &nproc_);
 
-    ret = client_init(listen_addr, &ndcl);
+
+    ret = client_init(listen_addr, rank_, &ndcl);
 
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
 
-	MPI_Comm_rank(gcomm_, &rank_);
-    MPI_Comm_size(gcomm_, &nproc_);
-
+	
 	unsigned int ts;
 	for(ts = 1; ts <= timesteps_; ts++){
 		ret = couple_read_nd(ndcl, ts, num_vars, ndims);

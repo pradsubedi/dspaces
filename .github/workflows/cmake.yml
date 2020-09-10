@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     container: philipdavis/dspaces:bionic-margo
 
+    defaults:
+      run:
+        shell: bash -l {0}
+
     steps:
     - uses: actions/checkout@v2
 

@@ -13,7 +13,7 @@ jobs:
     # cross-platform coverage.
     # See: https://docs.github.com/en/actions/configuring-and-managing-workflows/configuring-a-workflow#configuring-a-build-matrix
     runs-on: ubuntu-latest
-    container: philipdavis/dspaces:bionic-spack
+    container: philipdavis/dspaces:bionic-margo
 
     steps:
     - uses: actions/checkout@v2

@@ -11,7 +11,7 @@ if [ $1 -eq 1 ]; then
 	rm -rf servids.0
 	mpirun -n 2 ./dspaces_server sockets &
 	sleep 5
-	mpirun -n 2 ./test_writer sockets 1 2 64 5 8
+	mpirun -n 1 ./test_writer sockets 1 1 128 5 8
 	pkill dspaces_server
 	pkill test_writer
 elif [ $1 -eq 2 ]; then

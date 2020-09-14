@@ -1082,8 +1082,8 @@ int obj_desc_equals_intersect(obj_descriptor *odsc1,
  *   Test if two object descriptors have the same name and their bounding
  *     boxes intersect.
  *     */
-int obj_desc_by_name_intersect(obj_descriptor *odsc1,
-                obj_descriptor *odsc2)
+int obj_desc_by_name_intersect(const obj_descriptor *odsc1,
+                const obj_descriptor *odsc2)
 {
         if (strcmp(odsc1->name, odsc2->name) == 0 &&
             bbox_does_intersect(&odsc1->bb, &odsc2->bb))

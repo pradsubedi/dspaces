@@ -288,8 +288,8 @@ int obj_desc_equals_no_owner(obj_descriptor *, obj_descriptor *);
 int obj_desc_equals_intersect(obj_descriptor *odsc1,
                 obj_descriptor *odsc2);
 
-int obj_desc_by_name_intersect(obj_descriptor *odsc1,
-                obj_descriptor *odsc2);
+int obj_desc_by_name_intersect(const obj_descriptor *odsc1,
+                const obj_descriptor *odsc2);
 
 //void copy_global_dimension(struct global_dimension *l, int ndim, const uint64_t *gdim);
 int global_dimension_equal(const struct global_dimension* gdim1,

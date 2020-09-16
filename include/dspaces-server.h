@@ -28,9 +28,10 @@ typedef struct dspaces_provider* dspaces_provider_t;
  *
  * @param[in] comm MPI Comminicator
  * @param[out] server MESSAGING server
-  * @return MESSAGING_SUCCESS or error code defined in messaging-common.h
+ * @param[in] debug enable debugging
+ * @return MESSAGING_SUCCESS or error code defined in messaging-common.h
  */
-int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* server);
+int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* server, int debug);
 	
 
 /**

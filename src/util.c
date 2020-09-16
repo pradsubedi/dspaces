@@ -142,16 +142,13 @@ static void splitnamevalue (const char * line, int linelen,  char **name, char *
         /* 1. name */
         // from first char to before =
         *name = remove_whitespace ((char*)line, equal-1);
-        //printf ("      --name=[%s]\n", *name);
         /* 2. value */
         // from after = to the last character of line
         *value = remove_whitespace (equal+1, (char*)line+linelen-1);
-        //printf ("      --value=[%s]\n", *value);
 
     } else if (equal != line) {
         /* check if it as name without = value statement */
         *name = remove_whitespace ((char*)line, (char*)line+linelen-1);
-        //printf ("      --name only=[%s]\n", *name);
         *value = NULL;
     } else { 
         // funny text starting with =. E.g. "=value" 
@@ -192,7 +189,6 @@ struct name_value_pair* text_to_nv_pairs (const char * text)
         strncpy (line, item, len);
         line[len] = '\0';
 
-        //printf ("    --Line=[%s]\n", line);
         splitnamevalue(line, len, &name, &value);
         if (name) {
             pair = (struct name_value_pair*) malloc (sizeof(struct name_value_pair));

@@ -528,9 +528,6 @@ struct sspace *ssd_alloc_v2(const struct bbox *bb_domain, int num_nodes, int max
             ssd->dht->ent_tab[i]->size_bb_tab = n;
             ssd->dht->ent_tab[i]->bb_tab = malloc(sizeof(struct bbox)*n);
         }
-        //printf("%s(): ssd->total_num_bbox= %d ssd->dht->num_entries= %d"
-        //    " max_num_bbox_per_dht_entry= %d\n",
-        //    __func__, ssd->total_num_bbox, ssd->dht->num_entries, n);
 
         // simple round-robing mapping of decomposed bbox to dht entries
         i = 0;
@@ -541,18 +538,6 @@ struct sspace *ssd_alloc_v2(const struct bbox *bb_domain, int num_nodes, int max
             ssd->dht->ent_tab[j]->bb_tab[k] = *bb;
             free(bb);
         }
-
-/*
-        for (i = 0; i < ssd->dht->num_entries; i++) {
-            printf("dht entry %d size_bb_tab= %d num_bbox= %d\n", i,
-                ssd->dht->ent_tab[i]->size_bb_tab,
-                ssd->dht->ent_tab[i]->num_bbox);
-            for (j = 0; j < ssd->dht->ent_tab[i]->num_bbox; j++) {
-                bbox_print(&ssd->dht->ent_tab[i]->bb_tab[j]);
-            }        
-            printf("\n");
-        }
-*/
 
         ssd->hash_version = ssd_hash_version_v2;        
         return ssd;

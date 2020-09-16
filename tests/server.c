@@ -31,7 +31,7 @@ int main(int argc, char** argv)
     int color = 1;
     MPI_Comm_split(MPI_COMM_WORLD, color, rank, &gcomm);
 
-    int ret = server_init(listen_addr_str, gcomm, &s);
+    int ret = server_init(listen_addr_str, gcomm, &s, DSPACES_DEBUG);
     if(ret != 0) return ret;
 
     // make margo wait for finalize

@@ -17,6 +17,13 @@
 #include "dspaces-server.h"
 #include "gspace.h"
 
+#define DEBUG_OUT(args...) \
+    do { \
+        if(server->f_debug) { \
+           fprintf(stderr, args); \
+        } \
+    }while(0);
+
 static enum storage_type st = column_major;
 
 //pthread_mutex_t pmutex = PTHREAD_MUTEX_INITIALIZER;
@@ -41,7 +48,7 @@ struct dspaces_provider{
     hg_id_t drain_id;
     struct ds_gspace *dsg; 
     char **server_address;  
-
+    int f_debug;
 };
 
 
@@ -135,8 +142,8 @@ static int parse_line(int lineno, char *line)
                         idx++;
                     }
                     if(idx != *(int*)options[0].pval){
-                        fprintf(stderr, "index=%d, ndims=%d\n",idx, *(int*)options[0].pval);
-                        fprintf(stderr, "The number of coordination should the same as the number of dimensions!\n");
+                        fprintf(stderr, "ERROR: (%s): dimensionality mismatch.\n", __func__);
+                        fprintf(stderr, "ERROR: index=%d, ndims=%d\n",idx, *(int*)options[0].pval);
                         return -EINVAL;
                     }
                     break;
@@ -149,7 +156,7 @@ static int parse_line(int lineno, char *line)
         }
 
         if (i == n) {
-                printf("Unknown option '%s' at line %d.\n", line, lineno);
+                fprintf(stderr, "WARNING: (%s): unknown option '%s' at line %d.\n", __func__, line, lineno);
         }
         return 0;
 }
@@ -340,15 +347,6 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
             err = -EINVAL;
             goto err_out;
         }
-        /*
-       if((ds_conf.lock_type < lock_generic) ||
-            (ds_conf.lock_type >= _lock_type_count)) {
-            fprintf(stderr, "%s(): ERROR unknown lock type %d in file '%s'\n",
-                __func__, ds_conf.lock_type, conf_name);
-            err = -EINVAL;
-            goto err_out;
-        } 
-        */
 
         struct bbox domain;
         memset(&domain, 0, sizeof(struct bbox));
@@ -562,7 +560,7 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
         pthread_mutex_unlock(&ls_mutex);
     }
     //now update the dht with new owner information
-    fprintf(stderr, "Inside get_client_data\n");
+    DEBUG_OUT("Inside get_client_data\n");
     margo_addr_free(server->mid, client_addr);
     obj_put_update_dht(server, od);
     return out.ret;
@@ -576,17 +574,17 @@ static void *drain_thread(void*attr){
     while (1)
     {
         int counter = 0;
-        fprintf(stderr, "Thread WOKEUP\n");
+        DEBUG_OUT("Thread WOKEUP\n");
         do{
             counter = 0;
             obj_descriptor odsc;
             struct obj_desc_list *odscl;
             //requires better way to get the obj_descriptor
             pthread_mutex_lock(&odscmutex);
-            fprintf(stderr, "Inside odsc mutex\n");
+            DEBUG_OUT("Inside odsc mutex\n");
             list_for_each_entry(odscl, &(server->dsg->obj_desc_drain_list), struct obj_desc_list, odsc_entry){
                 memcpy(&odsc, &(odscl->odsc), sizeof(obj_descriptor));
-                fprintf(stderr, "Found %s in odsc_list\n", obj_desc_sprint(&odsc));
+                DEBUG_OUT("Found %s in odsc_list\n", obj_desc_sprint(&odsc));
                 counter = 1;
                 break;
                 
@@ -594,7 +592,7 @@ static void *drain_thread(void*attr){
             pthread_mutex_unlock(&odscmutex);
             if(counter == 1){
                 int ret = get_client_data(odsc, server);
-                fprintf(stderr, "Finished draining %s\n", obj_desc_sprint(&odsc));
+                DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
                 if(ret == dspaces_SUCCESS){
                     pthread_mutex_lock(&odscmutex);
                     //delete moved obj_descriptor from the list
@@ -615,13 +613,15 @@ static void *drain_thread(void*attr){
 }
 
 
-int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
+int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv, int debug)
 {
 
     dspaces_provider_t server;
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
     if(server == NULL)
         return dspaces_ERR_ALLOCATION; 
+
+    server->f_debug = debug;
 
     server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(server->mid);
@@ -736,7 +736,7 @@ static void put_rpc(hg_handle_t handle)
     memcpy(&od->gdim, in.odsc.raw_gdim, sizeof(struct global_dimension));
 
     if(!od)
-        fprintf(stderr, "Obj_data_alloc error\n");
+        fprintf(stderr, "ERROR: (%s): object allocation failed!\n", __func__);
 
     //do write lock
 
@@ -747,7 +747,7 @@ static void put_rpc(hg_handle_t handle)
                 HG_BULK_WRITE_ONLY, &bulk_handle);
 
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "Error in margo_bulk_create\n");
+        fprintf(stderr, "ERROR: (%s): margo_bulk_create failed!\n", __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -758,7 +758,7 @@ static void put_rpc(hg_handle_t handle)
     hret = margo_bulk_transfer(mid, HG_BULK_PULL, info->addr, in.handle, 0,
             bulk_handle, 0, size);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "Error in margo_bulk_transfer\n");
+        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer failed!\n", __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -771,7 +771,7 @@ static void put_rpc(hg_handle_t handle)
     ls_add_obj(server->dsg->ls, od);
     pthread_mutex_unlock(&ls_mutex);
 
-    fprintf(stderr, "Received obj %s\n", obj_desc_sprint(&od->obj_desc));
+    DEBUG_OUT("Received obj %s\n", obj_desc_sprint(&od->obj_desc));
 
     //now update the dht
     out.ret = dspaces_SUCCESS;
@@ -781,7 +781,7 @@ static void put_rpc(hg_handle_t handle)
     margo_destroy(handle);
 
     obj_put_update_dht(server, od);
-    fprintf(stderr, "Finished obj_put_update from put_rpc\n");
+    DEBUG_OUT("Finished obj_put_update from put_rpc\n");
 
     //do write unlock;
 
@@ -796,12 +796,13 @@ static void put_local_rpc(hg_handle_t handle)
     odsc_gdim_t in;
     bulk_out_t out;
     hg_bulk_t bulk_handle;
-    fprintf(stderr, "In the local put rpc\n");
 
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+
+    DEBUG_OUT("In the local put rpc\n");
 
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
@@ -814,16 +815,16 @@ static void put_local_rpc(hg_handle_t handle)
     memcpy(&od->gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
 
     if(!od)
-        fprintf(stderr, "Obj_data_alloc error\n");
+        fprintf(stderr, "ERROR: (%s): failed to allocate object data!\n", __func__);
 
 
-    fprintf(stderr, "Received obj %s  in put_local_rpc\n", obj_desc_sprint(&od->obj_desc));
+    DEBUG_OUT("Received obj %s  in put_local_rpc\n", obj_desc_sprint(&od->obj_desc));
 
    
     //now update the dht
 
     obj_put_update_dht(server, od);
-    fprintf(stderr, "Finished obj_put_local_update in local_put\n");
+    DEBUG_OUT("Finished obj_put_local_update in local_put\n");
 
     //add to the local list for marking as to be drained data
     struct obj_desc_list *odscl;
@@ -855,7 +856,6 @@ static void query_rpc(hg_handle_t handle)
     hg_return_t hret;
     odsc_gdim_t in;
     odsc_list_t out;
-    fprintf(stderr, "received query\n");
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     obj_descriptor *odsc_tab_all;
     obj_descriptor **odsc_tab;
@@ -864,6 +864,8 @@ static void query_rpc(hg_handle_t handle)
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+
+    DEBUG_OUT("received query\n");
 
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
@@ -874,7 +876,7 @@ static void query_rpc(hg_handle_t handle)
     struct global_dimension od_gdim;
     memcpy(&od_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
 
-    fprintf(stderr, "Received query for %s\n",  obj_desc_sprint(&in_odsc));
+    DEBUG_OUT("Received query for %s\n",  obj_desc_sprint(&in_odsc));
     //get the dht peers
     pthread_mutex_lock(&sspace_mutex);
     struct sspace* ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
@@ -885,7 +887,7 @@ static void query_rpc(hg_handle_t handle)
 
     int self_id_num = -1;
 
-    fprintf(stderr, "peer_num is %d\n", peer_num);
+    DEBUG_OUT("peer_num is %d\n", peer_num);
     odsc_tab = malloc(sizeof(obj_descriptor*) * peer_num);
     odsc_nums = malloc(sizeof(int) * peer_num);
 
@@ -901,8 +903,8 @@ static void query_rpc(hg_handle_t handle)
     {
         odsc_nums[i] = 0;  
 
-        fprintf(stderr, "dht servr id %d\n", de_tab[i]->rank);
-        fprintf(stderr, "self id %d\n", server->dsg->rank);
+        DEBUG_OUT("dht servr id %d\n", de_tab[i]->rank);
+        DEBUG_OUT("self id %d\n", server->dsg->rank);
 
         if(de_tab[i]->rank == server->dsg->rank){
             //I am one of the dht servers
@@ -911,7 +913,7 @@ static void query_rpc(hg_handle_t handle)
             obj_descriptor *podsc[ssd->ent_self->odsc_num];
             int obj_versions[ssd->ent_self->odsc_size];
             int num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc);
-            fprintf(stderr, "%d odscs found in %d\n",num_odsc, server->dsg->rank);
+            DEBUG_OUT("%d odscs found in %d\n",num_odsc, server->dsg->rank);
             odsc_nums[i] = num_odsc;
             total_odscs = total_odscs + num_odsc;
             if (!num_odsc) {
@@ -925,7 +927,7 @@ static void query_rpc(hg_handle_t handle)
                 odsc.st = in_odsc.st;
                 bbox_intersect(&in_odsc.bb, &odsc.bb, &odsc.bb);
                 odsc_tab[i][j] = odsc;
-                fprintf(stderr, "%s\n", obj_desc_sprint(&odsc_tab[i][j]));
+                DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i][j]));
             }
 
         }
@@ -955,7 +957,7 @@ static void query_rpc(hg_handle_t handle)
         margo_get_output(hndl[i], &dht_resp);
         if(dht_resp.odsc_list.size!=0){
             int num_received = (dht_resp.odsc_list.size)/sizeof(obj_descriptor);
-            fprintf(stderr, "received %d odscs from peer %d\n", num_received, i);
+            DEBUG_OUT("received %d odscs from peer %d\n", num_received, i);
             odsc_nums[i] = num_received;
             total_odscs = total_odscs + num_received;
             odsc_tab[i] = malloc(sizeof(obj_descriptor) * num_received);
@@ -965,8 +967,7 @@ static void query_rpc(hg_handle_t handle)
             {
                 obj_descriptor *print_od;
                 print_od = (obj_descriptor*)dht_resp.odsc_list.raw_odsc;
-                fprintf(stderr, "remote buffer: %s\n", obj_desc_sprint(&print_od[j]));
-                //fprintf(stderr, "Received odsc from remote dht: %s\n", obj_desc_sprint(&odsc_tab[i][j]));
+                DEBUG_OUT("remote buffer: %s\n", obj_desc_sprint(&print_od[j]));
             }    
 
         }
@@ -980,7 +981,7 @@ static void query_rpc(hg_handle_t handle)
         for (int j = 0; j < odsc_nums[i]; ++j)
         {
             memcpy(&odsc_tab_all[i+j*odsc_nums[i]], &odsc_tab[i][j], sizeof(obj_descriptor));
-            fprintf(stderr, "copied %s\n", obj_desc_sprint(&odsc_tab[i][j]));
+            DEBUG_OUT("copied %s\n", obj_desc_sprint(&odsc_tab[i][j]));
 
         }
         free(odsc_tab[i]);
@@ -990,7 +991,7 @@ static void query_rpc(hg_handle_t handle)
     //debug
     for (int i = 0; i < total_odscs; ++i)
     {
-        fprintf(stderr, "Odscs in respose %s\n", obj_desc_sprint(&odsc_tab_all[i]));
+        DEBUG_OUT("Odscs in respose %s\n", obj_desc_sprint(&odsc_tab_all[i]));
     }
 
     out.odsc_list.size = sizeof(obj_descriptor) * total_odscs;
@@ -1036,7 +1037,7 @@ static void get_rpc(hg_handle_t handle)
                 HG_BULK_READ_ONLY, &bulk_handle);
 
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"Error in margo_bulk_create()\n");
+        fprintf(stderr,"ERROR: (%s): margo_bulk_create() failure\n", __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -1047,7 +1048,7 @@ static void get_rpc(hg_handle_t handle)
     hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
             bulk_handle, 0, size);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"Error in margo_bulk_transfer()\n");
+        fprintf(stderr,"ERROR: (%s): margo_bulk_transfer() failure\n", __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -1119,7 +1120,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
     }
     for (int i = 0; i < num_odsc; ++i)
     {
-        fprintf(stderr, "send odsc: %s\n", obj_desc_sprint(&odsc_tab[i]));
+        DEBUG_OUT("send odsc: %s\n", obj_desc_sprint(&odsc_tab[i]));
     }
 }
 DEFINE_MARGO_RPC_HANDLER(odsc_internal_rpc)
@@ -1133,11 +1134,12 @@ static void obj_update_rpc(hg_handle_t handle)
     hg_return_t hret;
     odsc_gdim_t in;
 
-    fprintf(stderr, "Received rpc to update obj_dht\n");
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+
+    DEBUG_OUT("Received rpc to update obj_dht\n");
 
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS); 
@@ -1147,7 +1149,7 @@ static void obj_update_rpc(hg_handle_t handle)
     struct global_dimension gdim;
     memcpy(&gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
 
-    fprintf(stderr, "received update_rpc %s\n", obj_desc_sprint(&in_odsc));
+    DEBUG_OUT("received update_rpc %s\n", obj_desc_sprint(&in_odsc));
     pthread_mutex_lock(&sspace_mutex);
     struct sspace* ssd = lookup_sspace(server->dsg, in_odsc.name, &gdim); 
     pthread_mutex_unlock(&sspace_mutex);
@@ -1156,9 +1158,9 @@ static void obj_update_rpc(hg_handle_t handle)
     pthread_mutex_lock(&dht_mutex);
     int err = dht_add_entry(de, &in_odsc);
     pthread_mutex_unlock(&dht_mutex);
-    fprintf(stderr, "Updated dht %s in server %d \n", obj_desc_sprint(&in_odsc), server->dsg->rank);
+    DEBUG_OUT("Updated dht %s in server %d \n", obj_desc_sprint(&in_odsc), server->dsg->rank);
     if (err < 0)
-        fprintf(stderr, "obj_update_rpc Failed with %d\n", err);
+        fprintf(stderr, "ERROR (%s): obj_update_rpc Failed with %d\n", __func__, err);
 
     bulk_out_t out;
     out.ret = dspaces_SUCCESS;

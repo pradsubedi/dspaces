@@ -186,7 +186,7 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
     MPI_Comm_size(gcomm_, &nproc_);
 
 
-    ret = client_init(listen_addr, rank_, &ndcl, DSPACES_DEBUG);
+    ret = client_init(listen_addr, rank_, &ndcl);
 
 
 	tm_end = timer_read(&timer_);

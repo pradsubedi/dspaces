@@ -27,7 +27,7 @@ typedef struct dspaces_client* dspaces_client_t;
  *
  * @return dspaces_SUCCESS or error code defined in dspaces-common.h
  */
-int client_init(char *listen_addr_str, int rank, dspaces_client_t* client, int debug);
+int client_init(char *listen_addr_str, int rank, dspaces_client_t* client);
 
 
 void dspaces_define_gdim (dspaces_client_t client, 

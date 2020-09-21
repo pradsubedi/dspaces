@@ -206,13 +206,15 @@ fini:
     return ret;
 }
 
-int client_init(char *listen_addr_str, int rank, dspaces_client_t* c, int debug)
+int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
 {   
-    
+    const char *envdebug = getenv("DSPACES_DEBUG"); 
     dspaces_client_t client = (dspaces_client_t)calloc(1, sizeof(*client));
     if(!client) return dspaces_ERR_ALLOCATION;
 
-    client->f_debug = debug;
+    if(envdebug) {
+        client->f_debug = 1;
+    }
 
     client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(client->mid);
@@ -225,12 +227,12 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c, int debug)
     margo_registered_name(client->mid, "put_rpc", &id, &flag);
 
     if(flag == HG_TRUE) { /* RPCs already registered */
-        margo_registered_name(client->mid, "put_rpc",                   &client->put_id,                   &flag);
-        margo_registered_name(client->mid, "put_local_rpc",                   &client->put_local_id,                   &flag);
-        margo_registered_name(client->mid, "get_rpc",                   &client->get_id,                   &flag);
-        margo_registered_name(client->mid, "query_rpc",                   &client->query_id,                   &flag);
-        margo_registered_name(client->mid, "ss_rpc",                   &client->ss_id,                   &flag);
-        margo_registered_name(client->mid, "drain_rpc",                   &client->drain_id,                   &flag);
+        margo_registered_name(client->mid, "put_rpc",       &client->put_id, &flag);
+        margo_registered_name(client->mid, "put_local_rpc", &client->put_local_id, &flag);
+        margo_registered_name(client->mid, "get_rpc",       &client->get_id, &flag);
+        margo_registered_name(client->mid, "query_rpc",     &client->query_id, &flag);
+        margo_registered_name(client->mid, "ss_rpc",        &client->ss_id, &flag);
+        margo_registered_name(client->mid, "drain_rpc",     &client->drain_id, &flag);
    
     } else {
 
@@ -595,18 +597,13 @@ int dspaces_get (dspaces_client_t client,
     margo_free_output(handle, &out);
     margo_destroy(handle);
     
-
-
     DEBUG_OUT("Finished query\n");
     for (int i = 0; i < num_odscs; ++i)
     {
-        fprintf(stderr, "%s\n", obj_desc_sprint(&odsc_tab[i]));
+        DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i]));
     }
 
     //send request to get the obj_desc
-    //alloc data for each obj_descriptor
-
-
     if(num_odscs!=0)
         get_data(client, num_odscs, odsc, odsc_tab, data);
 

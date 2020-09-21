@@ -164,7 +164,7 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 
 	MPI_Comm_rank(gcomm_, &rank_);
 	
-    ret = client_init(listen_addr_str, rank_, &ndcl, DSPACES_DEBUG);
+    ret = client_init(listen_addr_str, rank_, &ndcl);
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);

@@ -26,9 +26,6 @@
 
 static enum storage_type st = column_major;
 
-//pthread_mutex_t pmutex = PTHREAD_MUTEX_INITIALIZER;
-//pthread_cond_t  pcond = PTHREAD_COND_INITIALIZER;
-
 pthread_mutex_t odscmutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t ls_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t dht_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -481,11 +478,11 @@ static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
     /* Update object descriptors on the corresponding nodes. */
     for (i = 0; i < num_de; i++) {
         if (dht_tab[i]->rank == server->dsg->rank) {
-            fprintf(stderr, "Add in local_dht %d\n", server->dsg->rank);
+            DEBUG_OUT("Add in local_dht %d\n", server->dsg->rank);
             pthread_mutex_lock(&dht_mutex);
             dht_add_entry(ssd->ent_self, odsc);
             pthread_mutex_unlock(&dht_mutex);
-            fprintf(stderr, "I am self, added in local dht %d\n", server->dsg->rank);
+            DEBUG_OUT("I am self, added in local dht %d\n", server->dsg->rank);
             continue;
         }
 
@@ -493,7 +490,7 @@ static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
         hg_return_t hret;
         odsc_gdim_t in;
         bulk_out_t out;
-        fprintf(stderr, "Server %d sending object %s to dht server %d \n", server->dsg->rank, obj_desc_sprint(odsc), dht_tab[i]->rank);
+        DEBUG_OUT("Server %d sending object %s to dht server %d \n", server->dsg->rank, obj_desc_sprint(odsc), dht_tab[i]->rank);
 
         in.odsc_gdim.size = sizeof(*odsc);
         in.odsc_gdim.gdim_size = sizeof(struct global_dimension);
@@ -508,7 +505,7 @@ static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
         margo_forward(h, &in);
         margo_get_output(h, &out);
 
-        fprintf(stderr, "sent obj server %d to update dht %s in \n", dht_tab[i]->rank, obj_desc_sprint(odsc));
+        DEBUG_OUT("sent obj server %d to update dht %s in \n", dht_tab[i]->rank, obj_desc_sprint(odsc));
 
         margo_addr_free(server->mid, svr_addr);
         margo_destroy(h);
@@ -613,15 +610,17 @@ static void *drain_thread(void*attr){
 }
 
 
-int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv, int debug)
+int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
 {
-
+    const char *envdebug = getenv("DSPACES_DEBUG");
     dspaces_provider_t server;
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
     if(server == NULL)
         return dspaces_ERR_ALLOCATION; 
 
-    server->f_debug = debug;
+    if(envdebug) {
+        server->f_debug = 1;
+    }
 
     server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(server->mid);

@@ -1271,7 +1271,6 @@ int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc,
     list_for_each_entry(odscl, &de->odsc_hash[n], struct obj_desc_list, odsc_entry) {
         if (obj_desc_equals_intersect(&odscl->odsc, q_odsc))
             odsc_tab[num_odsc++] = &odscl->odsc;
-        fprintf(stderr, "dht_entries %s\n", obj_desc_sprint(&odscl->odsc));
     }
 
         return num_odsc;

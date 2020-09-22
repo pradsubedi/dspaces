@@ -12,7 +12,6 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <abt.h>
-#include <pthread.h>
 #include "ss_data.h"
 #include "dspaces-server.h"
 #include "gspace.h"
@@ -25,11 +24,6 @@
     }while(0);
 
 static enum storage_type st = column_major;
-
-pthread_mutex_t odscmutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t ls_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t dht_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t sspace_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int cond_num = 0;
 
@@ -46,6 +40,16 @@ struct dspaces_provider{
     struct ds_gspace *dsg; 
     char **server_address;  
     int f_debug;
+    int f_kill;
+
+    ABT_mutex odsc_mutex;
+    ABT_mutex ls_mutex;
+    ABT_mutex dht_mutex;
+    ABT_mutex sspace_mutex;
+
+    ABT_xstream drain_xstream;
+    ABT_pool drain_pool;
+    ABT_thread drain_t;
 };
 
 
@@ -462,9 +466,9 @@ static struct sspace* lookup_sspace(struct ds_gspace *dsg_l, const char* var_nam
 static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
 {
     obj_descriptor *odsc = &od->obj_desc;
-    pthread_mutex_lock(&sspace_mutex);
+    ABT_mutex_lock(server->sspace_mutex);
     struct sspace* ssd = lookup_sspace(server->dsg, odsc->name, &od->gdim);
-    pthread_mutex_unlock(&sspace_mutex);
+    ABT_mutex_unlock(server->sspace_mutex);
     struct dht_entry *dht_tab[ssd->dht->num_entries];
 
     int num_de, i, err;
@@ -479,9 +483,9 @@ static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
     for (i = 0; i < num_de; i++) {
         if (dht_tab[i]->rank == server->dsg->rank) {
             DEBUG_OUT("Add in local_dht %d\n", server->dsg->rank);
-            pthread_mutex_lock(&dht_mutex);
+            ABT_mutex_lock(server->dht_mutex);
             dht_add_entry(ssd->ent_self, odsc);
-            pthread_mutex_unlock(&dht_mutex);
+            ABT_mutex_unlock(server->dht_mutex);
             DEBUG_OUT("I am self, added in local dht %d\n", server->dsg->rank);
             continue;
         }
@@ -552,9 +556,9 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
     margo_forward(handle, &in);
     margo_get_output(handle, &out);
     if(out.ret == dspaces_SUCCESS){
-        pthread_mutex_lock(&ls_mutex);
+        ABT_mutex_lock(server->ls_mutex);
         ls_add_obj(server->dsg->ls, od);
-        pthread_mutex_unlock(&ls_mutex);
+        ABT_mutex_unlock(server->ls_mutex);
     }
     //now update the dht with new owner information
     DEBUG_OUT("Inside get_client_data\n");
@@ -566,9 +570,10 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
 
 
 //thread to move data between layers
-static void *drain_thread(void*attr){
-    dspaces_provider_t server = attr;
-    while (1)
+static void drain_thread(void *arg)
+{
+    dspaces_provider_t server = arg;
+    while (!server->f_kill)
     {
         int counter = 0;
         DEBUG_OUT("Thread WOKEUP\n");
@@ -577,7 +582,7 @@ static void *drain_thread(void*attr){
             obj_descriptor odsc;
             struct obj_desc_list *odscl;
             //requires better way to get the obj_descriptor
-            pthread_mutex_lock(&odscmutex);
+            ABT_mutex_lock(server->odsc_mutex);
             DEBUG_OUT("Inside odsc mutex\n");
             list_for_each_entry(odscl, &(server->dsg->obj_desc_drain_list), struct obj_desc_list, odsc_entry){
                 memcpy(&odsc, &(odscl->odsc), sizeof(obj_descriptor));
@@ -586,15 +591,15 @@ static void *drain_thread(void*attr){
                 break;
                 
             }
-            pthread_mutex_unlock(&odscmutex);
+            ABT_mutex_unlock(server->odsc_mutex);
             if(counter == 1){
                 int ret = get_client_data(odsc, server);
                 DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
                 if(ret == dspaces_SUCCESS){
-                    pthread_mutex_lock(&odscmutex);
+                    ABT_mutex_lock(server->odsc_mutex);
                     //delete moved obj_descriptor from the list
                     list_del(&odscl->odsc_entry);
-                    pthread_mutex_unlock(&odscmutex);
+                    ABT_mutex_unlock(server->odsc_mutex);
                 }
                 sleep(1);
 
@@ -603,8 +608,8 @@ static void *drain_thread(void*attr){
         }while(counter == 1); 
 
         sleep(10);                            
-        
-        //pthread_mutex_unlock(&pmutex);
+   
+        ABT_thread_yield();    
     }
         
 }
@@ -614,6 +619,10 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
 {
     const char *envdebug = getenv("DSPACES_DEBUG");
     dspaces_provider_t server;
+    hg_bool_t flag;
+    hg_id_t id;
+    int ret; 
+
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
     if(server == NULL)
         return dspaces_ERR_ALLOCATION; 
@@ -625,20 +634,22 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
     server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(server->mid);
 
+    ret = ABT_mutex_create(&server->odsc_mutex);
+    ret = ABT_mutex_create(&server->ls_mutex);
+    ret = ABT_mutex_create(&server->dht_mutex);
+    ret = ABT_mutex_create(&server->sspace_mutex);
     
-    hg_bool_t flag;
-    hg_id_t id;
     margo_registered_name(server->mid, "put_rpc", &id, &flag);
 
     if(flag == HG_TRUE) { /* RPCs already registered */
-        margo_registered_name(server->mid, "put_rpc",                   &server->put_id,                   &flag);
-        margo_registered_name(server->mid, "put_local_rpc",                   &server->put_local_id,                   &flag);
-        margo_registered_name(server->mid, "get_rpc",                   &server->get_id,                   &flag);
-        margo_registered_name(server->mid, "query_rpc",                   &server->query_id,                   &flag);
-        margo_registered_name(server->mid, "obj_update_rpc",                   &server->obj_update_id,                   &flag);
-        margo_registered_name(server->mid, "odsc_internal_rpc",                   &server->odsc_internal_id,                   &flag);
-        margo_registered_name(server->mid, "ss_rpc",                   &server->ss_id,                   &flag);
-        margo_registered_name(server->mid, "drain_rpc",                   &server->drain_id,                   &flag);
+        margo_registered_name(server->mid, "put_rpc",           &server->put_id,                   &flag);
+        margo_registered_name(server->mid, "put_local_rpc",     &server->put_local_id,                   &flag);
+        margo_registered_name(server->mid, "get_rpc",           &server->get_id,                   &flag);
+        margo_registered_name(server->mid, "query_rpc",         &server->query_id,                   &flag);
+        margo_registered_name(server->mid, "obj_update_rpc",    &server->obj_update_id,                   &flag);
+        margo_registered_name(server->mid, "odsc_internal_rpc", &server->odsc_internal_id,                   &flag);
+        margo_registered_name(server->mid, "ss_rpc",            &server->ss_id,                   &flag);
+        margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,                   &flag);
    
     } else {
 
@@ -674,8 +685,10 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
     *sv = server;
 
     //thread to drain the data
-    pthread_t t_drain;
-    pthread_create(&t_drain, NULL, drain_thread, (void*)server); //Create thread
+    server->f_kill = 0;
+    ABT_xstream_create(ABT_SCHED_NULL, &server->drain_xstream);
+    ABT_xstream_get_main_pools(server->drain_xstream, 1, &server->drain_pool);
+    ABT_thread_create(server->drain_pool, drain_thread, server, ABT_THREAD_ATTR_NULL, &server->drain_t); 
 
     return dspaces_SUCCESS;
 }
@@ -692,6 +705,11 @@ int server_destroy(dspaces_provider_t server)
     margo_deregister(server->mid, server->odsc_internal_id);
     margo_deregister(server->mid, server->ss_id);
     /* deregister other RPC ids ... */
+
+    server->f_kill = 1;
+    ABT_thread_free(&server->drain_t);
+    ABT_xstream_join(server->drain_xstream);
+    ABT_xstream_free(&server->drain_xstream);
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);
@@ -766,9 +784,9 @@ static void put_rpc(hg_handle_t handle)
         return;
     }
 
-    pthread_mutex_lock(&ls_mutex);
+    ABT_mutex_lock(server->ls_mutex);
     ls_add_obj(server->dsg->ls, od);
-    pthread_mutex_unlock(&ls_mutex);
+    ABT_mutex_unlock(server->ls_mutex);
 
     DEBUG_OUT("Received obj %s\n", obj_desc_sprint(&od->obj_desc));
 
@@ -830,9 +848,9 @@ static void put_local_rpc(hg_handle_t handle)
     odscl = malloc(sizeof(*odscl));
     memcpy(&odscl->odsc, &od->obj_desc, sizeof(obj_descriptor));
 
-    pthread_mutex_lock(&odscmutex);
+    ABT_mutex_lock(server->odsc_mutex);
     list_add_tail(&odscl->odsc_entry, &server->dsg->obj_desc_drain_list);
-    pthread_mutex_unlock(&odscmutex);
+    ABT_mutex_unlock(server->odsc_mutex);
 
     //wake up thread to initiate draining
     //pthread_mutex_lock(&pmutex);
@@ -858,8 +876,10 @@ static void query_rpc(hg_handle_t handle)
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     obj_descriptor *odsc_tab_all;
     obj_descriptor **odsc_tab;
+    struct sspace *ssd;
     int *odsc_nums;
     int total_odscs = 0;
+    int timeout;
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
@@ -877,12 +897,12 @@ static void query_rpc(hg_handle_t handle)
 
     DEBUG_OUT("Received query for %s\n",  obj_desc_sprint(&in_odsc));
     //get the dht peers
-    pthread_mutex_lock(&sspace_mutex);
-    struct sspace* ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
-    pthread_mutex_unlock(&sspace_mutex);
+    ABT_mutex_lock(server->sspace_mutex);
+    ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
+    ABT_mutex_unlock(server->sspace_mutex);
     struct dht_entry *de_tab[ssd->dht->num_entries];
-    int peer_num;
-    peer_num = ssd_hash(ssd, &(in_odsc.bb), de_tab);
+    int peer_num = ssd_hash(ssd, &(in_odsc.bb), de_tab);
+    int num_odsc;
 
     int self_id_num = -1;
 
@@ -910,8 +930,7 @@ static void query_rpc(hg_handle_t handle)
             self_id_num = i;
             //now get obj_descriptors
             obj_descriptor *podsc[ssd->ent_self->odsc_num];
-            int obj_versions[ssd->ent_self->odsc_size];
-            int num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc);
+            num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc);
             DEBUG_OUT("%d odscs found in %d\n",num_odsc, server->dsg->rank);
             odsc_nums[i] = num_odsc;
             total_odscs = total_odscs + num_odsc;
@@ -922,13 +941,12 @@ static void query_rpc(hg_handle_t handle)
             for (int j = 0; j < num_odsc; j++) {
                 obj_descriptor odsc;
                 odsc = *podsc[j];
-                /* Preserve storage type at the destination. */
+                // Preserve storage type at the destination.
                 odsc.st = in_odsc.st;
                 bbox_intersect(&in_odsc.bb, &odsc.bb, &odsc.bb);
                 odsc_tab[i][j] = odsc;
                 DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i][j]));
             }
-
         }
         else{
             hg_addr_t server_addr;
@@ -1086,9 +1104,9 @@ static void odsc_internal_rpc(hg_handle_t handle)
 
     
     obj_descriptor odsc, *odsc_tab;
-    pthread_mutex_lock(&sspace_mutex);
+    ABT_mutex_lock(server->sspace_mutex);
     struct sspace* ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
-    pthread_mutex_unlock(&sspace_mutex);
+    ABT_mutex_unlock(server->sspace_mutex);
     obj_descriptor *podsc[ssd->ent_self->odsc_num];
     int num_odsc;
     num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc);
@@ -1149,14 +1167,14 @@ static void obj_update_rpc(hg_handle_t handle)
     memcpy(&gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
 
     DEBUG_OUT("received update_rpc %s\n", obj_desc_sprint(&in_odsc));
-    pthread_mutex_lock(&sspace_mutex);
+    ABT_mutex_lock(server->sspace_mutex);
     struct sspace* ssd = lookup_sspace(server->dsg, in_odsc.name, &gdim); 
-    pthread_mutex_unlock(&sspace_mutex);
+    ABT_mutex_unlock(server->sspace_mutex);
     struct dht_entry *de = ssd->ent_self;
 
-    pthread_mutex_lock(&dht_mutex);
+    ABT_mutex_lock(server->dht_mutex);
     int err = dht_add_entry(de, &in_odsc);
-    pthread_mutex_unlock(&dht_mutex);
+    ABT_mutex_unlock(server->dht_mutex);
     DEBUG_OUT("Updated dht %s in server %d \n", obj_desc_sprint(&in_odsc), server->dsg->rank);
     if (err < 0)
         fprintf(stderr, "ERROR (%s): obj_update_rpc Failed with %d\n", __func__, err);

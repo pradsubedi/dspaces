@@ -1145,6 +1145,82 @@ void ssd_free(struct sspace *ss)
     }
 }
 
+long ssh_hash_elem_count_v1(struct sspace *ss, const struct bbox *bb)
+{
+    struct intv *i_tab, *i_self;
+    long overlap, num_elem;
+    int i, n;
+
+    //TODO: cache results
+
+    bbox_to_intv2(bb, ss->max_dim, ss->bpd, &i_tab, &n);
+
+    i_self = &ss->ent_self->i_virt;
+
+    num_elem = 0;
+    for(i = 0; i < n; i++) {
+        if(i_self->lb <= i_tab[i].ub && i_self->ub >= i_tab[i].lb) {
+            overlap = (i_self->ub - i_tab[i].lb) + 1;
+            if(i_tab[i].lb > i_self->lb) {
+                overlap -= i_tab[i].lb - i_self->lb;
+            }
+            if(i_self->ub > i_tab[i].ub) {
+                overlap -= i_self->ub - i_tab[i].ub;
+            }
+            num_elem += overlap;
+        }
+    }
+
+    return(num_elem);
+}
+
+long ssh_hash_elem_count_v2(struct sspace *ss, const struct bbox *bb)
+{
+    long num_elem;
+    struct bbox *ent_bb;
+    struct bbox isect;
+    int i;
+
+    //TODO: cache results
+
+    num_elem = 0;
+    for(i = 0; i < ss->ent_self->num_bbox; i++) {
+        ent_bb = &ss->ent_self->bb_tab[i];
+        if(bbox_does_intersect(bb, ent_bb)) {
+            bbox_intersect(bb, ent_bb, &isect);
+            num_elem += bbox_volume(&isect);
+        }
+    }
+
+    return(num_elem);
+}
+
+
+/*
+ Get the number of elements of a bounding box 'bb' that hash to the
+ local dht
+ */
+long ssh_hash_elem_count(struct sspace *ss, const struct bbox *bb)
+{
+    long ret;
+
+    switch(ss->hash_version) {
+    case ssd_hash_version_v1:
+        ret = ssh_hash_elem_count_v1(ss, bb);
+        break;
+    case ssd_hash_version_v2:
+        ret = ssh_hash_elem_count_v2(ss, bb);
+        break;
+    default:
+        fprintf(stderr, "%s(): ERROR unknown shared space hash version %u\n",
+            __func__, ss->hash_version);
+        ret = 0;
+        break;
+    }
+
+    return(ret);
+}
+
 /*
   Hash a bounding box 'bb' to the hash entries in dht; fill in the
   entries in the de_tab and return the number of entries.
@@ -1241,6 +1317,9 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
         if (odscl) {
                 /* There  is allready  a descriptor  with  a different
            version in the DHT, so I will overwrite it. */
+                if(odscl->odsc.version == odsc->version) {
+                    fprintf(stderr, "WARNING: the server has detected an overlapping put (same version and some common elements with a previous put. DataSpaces storage is intended to be immutable, and the behavior of updates is undefined. Proceed at your own risk...\n"); 
+                }
                 memcpy(&odscl->odsc, odsc, sizeof(*odsc));
                 return 0;
         }
@@ -1273,7 +1352,7 @@ int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc,
             odsc_tab[num_odsc++] = &odscl->odsc;
     }
 
-        return num_odsc;
+    return num_odsc;
 }
 
 /*

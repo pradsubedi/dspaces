@@ -252,7 +252,8 @@ void ssd_free(struct sspace *);
 //
 
 int ssd_copy(struct obj_data *, struct obj_data *);
-
+//
+long ssh_hash_elem_count(struct sspace *ss, const struct bbox *bb);
 //
 int ssd_filter(struct obj_data *, obj_descriptor *, double *);
 int ssd_hash(struct sspace *, const struct bbox *, struct dht_entry *[]);

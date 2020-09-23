@@ -150,7 +150,7 @@ int bbox_does_intersect(const struct bbox *b0, const struct bbox *b1)
   Compute the intersection of bounding boxes b0 and b1, and store it on
   b2. Implicit assumption: b0 and b1 intersect.
 */
-void bbox_intersect(struct bbox *b0, const struct bbox *b1, struct bbox *b2)
+void bbox_intersect(const struct bbox *b0, const struct bbox *b1, struct bbox *b2)
 {
         int i;
 

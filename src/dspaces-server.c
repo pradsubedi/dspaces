@@ -19,6 +19,7 @@
 #define DEBUG_OUT(args...) \
     do { \
         if(server->f_debug) { \
+           fprintf(stderr, "Rank %i: %s, line %i (%s): ", server->rank, __FILE__, __LINE__, __func__); \
            fprintf(stderr, args); \
         } \
     }while(0);
@@ -39,6 +40,7 @@ struct dspaces_provider{
     hg_id_t drain_id;
     struct ds_gspace *dsg; 
     char **server_address;  
+    int rank;
     int f_debug;
     int f_kill;
 
@@ -573,6 +575,7 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
 static void drain_thread(void *arg)
 {
     dspaces_provider_t server = arg;
+
     while (!server->f_kill)
     {
         int counter = 0;
@@ -598,6 +601,7 @@ static void drain_thread(void *arg)
                 if(ret == dspaces_SUCCESS){
                     ABT_mutex_lock(server->odsc_mutex);
                     //delete moved obj_descriptor from the list
+                    DEBUG_OUT("Deleting drain entry\n");
                     list_del(&odscl->odsc_entry);
                     ABT_mutex_unlock(server->odsc_mutex);
                 }
@@ -630,6 +634,8 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
     if(envdebug) {
         server->f_debug = 1;
     }
+
+    MPI_Comm_rank(comm, &server->rank);
 
     server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(server->mid);
@@ -849,6 +855,7 @@ static void put_local_rpc(hg_handle_t handle)
     memcpy(&odscl->odsc, &od->obj_desc, sizeof(obj_descriptor));
 
     ABT_mutex_lock(server->odsc_mutex);
+    DEBUG_OUT("Adding drain list entry.\n");
     list_add_tail(&odscl->odsc_entry, &server->dsg->obj_desc_drain_list);
     ABT_mutex_unlock(server->odsc_mutex);
 

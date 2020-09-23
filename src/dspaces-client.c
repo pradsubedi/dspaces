@@ -20,12 +20,15 @@
 #define DEBUG_OUT(args...) \
     do { \
         if(client->f_debug) { \
+           fprintf(stderr, "Rank %i: %s, line %i (%s): ", client->rank, __FILE__, __LINE__, __func__); \
            fprintf(stderr, args); \
         } \
     }while(0);
 
 static enum storage_type st = column_major;
 pthread_mutex_t ls_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t drain_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t drain_cond = PTHREAD_COND_INITIALIZER;
 
 struct dspaces_client {
     margo_instance_id mid;
@@ -39,8 +42,9 @@ struct dspaces_client {
     char **server_address;
     int size_sp;
     int rank;
-    int local_put_indicator; // used during finalize
-    int f_debug;    
+    int local_put_count; // used during finalize
+    int f_debug;
+    int f_final;
 };
 
 DECLARE_MARGO_RPC_HANDLER(get_rpc);
@@ -265,7 +269,8 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
     DEBUG_OUT("Total max versions on the client side is %d\n", client->dcg->max_versions);
 
     client->dcg->ls = ls_alloc(client->dcg->max_versions);
-    client->local_put_indicator = 0;
+    client->local_put_count = 0;
+    client->f_final = 0;
 
     *c = client;
 
@@ -275,8 +280,16 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
 
 int client_finalize(dspaces_client_t client)
 {
-    if(client->local_put_indicator == 1)
-        margo_wait_for_finalize(client->mid);
+    DEBUG_OUT("client rank %d in %s\n", client->rank, __func__);
+
+    do { // watch out for spurious wake
+        pthread_mutex_lock(&drain_mutex);
+        client->f_final = 1;
+
+        if(client->local_put_count > 0)
+            pthread_cond_wait(&drain_cond, &drain_mutex);
+        pthread_mutex_unlock(&drain_mutex);
+    } while(client->local_put_count > 0);
 
     free_gdim_list(&client->dcg->gdim_list);
     free(client->server_address[0]);
@@ -459,7 +472,7 @@ int dspaces_put_local (dspaces_client_t client,
     int ret = dspaces_SUCCESS;
     hg_handle_t handle;
 
-    client->local_put_indicator = 1;
+    client->local_put_count++;
 
     obj_descriptor odsc = {
             .version = ver, 
@@ -755,6 +768,13 @@ static void drain_rpc(hg_handle_t handle)
     pthread_mutex_lock(&ls_mutex);  
     ls_try_remove_free(client->dcg->ls, from_obj);
     pthread_mutex_unlock(&ls_mutex);
-    
+
+    pthread_mutex_lock(&drain_mutex);
+    client->local_put_count--;
+    if(client->local_put_count == 0 && client->f_final) {
+        pthread_cond_signal(&drain_cond);
+    }
+    pthread_mutex_unlock(&drain_mutex);
+
 }
 DEFINE_MARGO_RPC_HANDLER(drain_rpc)

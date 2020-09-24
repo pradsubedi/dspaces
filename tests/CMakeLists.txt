@@ -17,10 +17,11 @@ find_program (BASH_PROGRAM bash)
 
 if (BASH_PROGRAM)
   add_test (Test_write ${BASH_PROGRAM} test_script.sh 1)
+  set_tests_properties(Test_write PROPERTIES TIMEOUT 30) 
   add_test (Test_read ${BASH_PROGRAM} test_script.sh 2)
+  set_tests_properties(Test_read PROPERTIES TIMEOUT 30) 
   add_test (Test_read_data_subset ${BASH_PROGRAM} test_script.sh 3)
+  set_tests_properties(Test_read_data_subset PROPERTIES TIMEOUT 30) 
   add_test (Test_read_ts_subset ${BASH_PROGRAM} test_script.sh 4)
-
-  set_property(TEST PROPERTY ENVIRONMENT
-"PATH=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}:$ENV{PATH}")
+  set_tests_properties(Test_read_ts_subset PROPERTIES TIMEOUT 30) 
 endif (BASH_PROGRAM)

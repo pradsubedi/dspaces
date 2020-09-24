@@ -17,6 +17,8 @@
 #include <mercury_macros.h>
 #include <margo.h>
 
+#include <abt.h>
+
 #define MAX_VERSIONS 10
 
 typedef struct {
@@ -239,7 +241,7 @@ MERCURY_GEN_PROC(bulk_in_t,
         ((odsc_hdr)(odsc))\
         ((hg_bulk_t)(handle)))
 MERCURY_GEN_PROC(bulk_out_t, ((int32_t)(ret)))
-MERCURY_GEN_PROC(odsc_gdim_t, ((odsc_hdr_with_gdim)(odsc_gdim)))
+MERCURY_GEN_PROC(odsc_gdim_t, ((odsc_hdr_with_gdim)(odsc_gdim))((int32_t)(param)))
 MERCURY_GEN_PROC(odsc_list_t, ((odsc_hdr)(odsc_list)))
 MERCURY_GEN_PROC(ss_information, ((odsc_hdr)(ss_buf)))
 
@@ -284,7 +286,7 @@ void obj_data_free(struct obj_data *od);
 uint64_t obj_data_size(obj_descriptor *);
 
 int obj_desc_equals(obj_descriptor *, obj_descriptor *);
-int obj_desc_equals_no_owner(obj_descriptor *, obj_descriptor *);
+int obj_desc_equals_no_owner(const obj_descriptor *, const obj_descriptor *);
 
 int obj_desc_equals_intersect(obj_descriptor *odsc1,
                 obj_descriptor *odsc2);

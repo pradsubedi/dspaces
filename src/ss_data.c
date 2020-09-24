@@ -37,6 +37,8 @@
 #include "ss_data.h"
 #include "queue.h"
 
+#include<abt.h>
+
 /*
   A view in  the matrix allows to extract any subset  of values from a
   matrix.
@@ -1028,12 +1030,10 @@ uint64_t obj_data_size(obj_descriptor *obj_desc)
 }
 
 
-int obj_desc_equals_no_owner(obj_descriptor *odsc1,
-                 obj_descriptor *odsc2)
+int obj_desc_equals_no_owner(const obj_descriptor *odsc1,
+                 const obj_descriptor *odsc2)
 {
-        /* Note: object distribution should not change with
-           version. */
-        if (// odsc1->version == odsc2->version && 
+        if (odsc1->version == odsc2->version && 
             strcmp(odsc1->name, odsc2->name) == 0 &&
             bbox_equals(&odsc1->bb, &odsc2->bb))
                 return 1;
@@ -1306,23 +1306,91 @@ dht_find_match(const struct dht_entry *de, const obj_descriptor *odsc)
     return 0;
 }
 
+static obj_descriptor *dht_find_exact(const struct dht_entry *de, const obj_descriptor *odsc)
+{
+    struct obj_desc_list *odscl;
+    int n;
+
+    n = odsc->version % de->odsc_size;
+    list_for_each_entry(odscl, &de->odsc_hash[n], struct obj_desc_list, odsc_entry) {
+       if(obj_desc_equals_no_owner(odsc, &odscl->odsc)) {
+            return(&odscl->odsc);
+        } 
+    }
+
+    return(NULL);
+}
+
 #define array_resize(a, n) a = realloc(a, sizeof(*a) * (n))
+
+/*`
+ * subscribe to a certain number of elements, remaining, of an object descriptor
+ *  q_odsc. When dht updates are added, they will be checked against subscriptions
+ * created by this function. Each incoming update that overlaps with q_odsc will
+ * decrement sub.remaining by the size of the overlap and increment pub_count by
+ * one. The general idea is that once enough elements that overlap with the query
+ * have been counted, the query must be fully satisfiable.
+ *
+ * Updates and signals are coming from dht_add_entry
+ *
+ * TODO: if we ever overwrite an object that is needed to satisfy q_odsc, the
+ *  subscription should fail and that failure should be propagated.
+ *
+ */
+int dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc, 
+                    obj_descriptor **odsc_tab, long remaining, int timeout)
+{
+    struct dht_sub_list_entry sub;
+    int n = q_odsc->version % de->odsc_size;
+
+    sub.odsc = q_odsc;
+    sub.odsc_tab = odsc_tab;
+    sub.remaining = remaining;
+    sub.pub_count = 0;
+   
+    list_add(&sub.entry, &de->dht_subs[n]);
+ 
+    do {
+        ABT_cond_wait(de->hash_cond[n], de->hash_mutex[n]);
+    }while(sub.remaining > 0);
+
+    return(sub.pub_count);
+}
+
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
+{
+    obj_descriptor *old_odsc;
+
+    old_odsc = dht_find_exact(de, odsc);
+    if(!old_odsc) {
+        fprintf(stderr, "ERROR: (%s): no matching object found when doing update. Object being updated is %s\n", __func__, obj_desc_sprint(odsc));
+        return(-ENOENT);
+    }
+    strcpy(old_odsc->owner, odsc->owner);    
+
+    return 0;
+
+}
 
 int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
 {
     struct obj_desc_list *odscl;
-        int n, err = -ENOMEM;
+    struct dht_sub_list_entry *sub, *tmp;
+    struct bbox isect;
+    int n, err = -ENOMEM;
 
-        odscl = dht_find_match(de, odsc);
-        if (odscl) {
-                /* There  is allready  a descriptor  with  a different
-           version in the DHT, so I will overwrite it. */
-                if(odscl->odsc.version == odsc->version) {
-                    fprintf(stderr, "WARNING: the server has detected an overlapping put (same version and some common elements with a previous put. DataSpaces storage is intended to be immutable, and the behavior of updates is undefined. Proceed at your own risk...\n"); 
-                }
-                memcpy(&odscl->odsc, odsc, sizeof(*odsc));
-                return 0;
+    odscl = dht_find_match(de, odsc);
+    if (odscl) {
+           /* There  is allready  a descriptor  with  a different
+              version in the DHT, so I will overwrite it. */
+        if(odscl->odsc.version == odsc->version) {
+            fprintf(stderr, "WARNING: the server has detected an overlapping put (same version and some common elements with a previous put. DataSpaces storage is intended to be immutable, and the behavior of updates is undefined. Proceed at your own risk...\n"); 
+            fprintf(stderr, " New put is: \n%s\n", obj_desc_sprint(odsc));
+            fprintf(stderr, " But found existing: \n%s\n", obj_desc_sprint(&odscl->odsc));
         }
+        memcpy(&odscl->odsc, odsc, sizeof(*odsc));
+        return 0;
+    }
 
     n = odsc->version % de->odsc_size;
     odscl = malloc(sizeof(*odscl));

@@ -444,6 +444,7 @@ static int get_data(dspaces_client_t client, int num_odscs, obj_descriptor req_o
 
     struct obj_data *return_od = obj_data_alloc_no_data(&req_obj, data);
 
+    //TODO: rewrite with margo_wait_any()
     for (int i = 0; i < num_odscs; ++i){
         margo_wait(serv_req[i]);
         bulk_out_t resp;

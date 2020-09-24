@@ -26,6 +26,11 @@
 
 static enum storage_type st = column_major;
 
+typedef enum obj_update_type {
+    DS_OBJ_NEW,
+    DS_OBJ_OWNER
+} obj_update_t;
+
 int cond_num = 0;
 
 struct dspaces_provider{
@@ -464,8 +469,7 @@ static struct sspace* lookup_sspace(struct ds_gspace *dsg_l, const char* var_nam
     return ssd_entry->ssd;
 }
 
-
-static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
+static int obj_update_dht(dspaces_provider_t server, struct obj_data *od, obj_update_t type)
 {
     obj_descriptor *odsc = &od->obj_desc;
     ABT_mutex_lock(server->sspace_mutex);
@@ -486,7 +490,16 @@ static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
         if (dht_tab[i]->rank == server->dsg->rank) {
             DEBUG_OUT("Add in local_dht %d\n", server->dsg->rank);
             ABT_mutex_lock(server->dht_mutex);
-            dht_add_entry(ssd->ent_self, odsc);
+            switch(type) {
+            case DS_OBJ_NEW:
+                dht_add_entry(ssd->ent_self, odsc);
+                break;
+            case DS_OBJ_OWNER:
+                dht_update_owner(ssd->ent_self, odsc);
+                break;
+            default:
+                fprintf(stderr, "ERROR: (%s): unknown object update type.\n", __func__);
+            }
             ABT_mutex_unlock(server->dht_mutex);
             DEBUG_OUT("I am self, added in local dht %d\n", server->dsg->rank);
             continue;
@@ -502,6 +515,7 @@ static int obj_put_update_dht(dspaces_provider_t server, struct obj_data *od)
         in.odsc_gdim.gdim_size = sizeof(struct global_dimension);
         in.odsc_gdim.raw_odsc = (char*)(odsc);
         in.odsc_gdim.raw_gdim = (char*)(&od->gdim);
+        in.param = type;
 
         hg_addr_t svr_addr;
         margo_addr_lookup(server->mid, server->server_address[dht_tab[i]->rank], &svr_addr);
@@ -565,7 +579,7 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
     //now update the dht with new owner information
     DEBUG_OUT("Inside get_client_data\n");
     margo_addr_free(server->mid, client_addr);
-    obj_put_update_dht(server, od);
+    obj_update_dht(server, od, DS_OBJ_OWNER);
     return out.ret;
 
 }
@@ -701,7 +715,9 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
 
 int server_destroy(dspaces_provider_t server)
 {
+    DEBUG_OUT("waiting for finalize.\n");
     margo_wait_for_finalize(server->mid);
+    DEBUG_OUT("got finalize.\n");
 
     margo_deregister(server->mid, server->put_id);
     margo_deregister(server->mid, server->put_local_id);
@@ -803,7 +819,7 @@ static void put_rpc(hg_handle_t handle)
     margo_free_input(handle, &in);
     margo_destroy(handle);
 
-    obj_put_update_dht(server, od);
+    obj_update_dht(server, od, DS_OBJ_NEW);
     DEBUG_OUT("Finished obj_put_update from put_rpc\n");
 
     //do write unlock;
@@ -846,7 +862,7 @@ static void put_local_rpc(hg_handle_t handle)
    
     //now update the dht
 
-    obj_put_update_dht(server, od);
+    obj_update_dht(server, od, DS_OBJ_NEW);
     DEBUG_OUT("Finished obj_put_local_update in local_put\n");
 
     //add to the local list for marking as to be drained data
@@ -1157,6 +1173,8 @@ static void obj_update_rpc(hg_handle_t handle)
 {
     hg_return_t hret;
     odsc_gdim_t in;
+    obj_update_t type;
+    int err;
 
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
@@ -1172,6 +1190,7 @@ static void obj_update_rpc(hg_handle_t handle)
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
     struct global_dimension gdim;
     memcpy(&gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
+    type = in.param;
 
     DEBUG_OUT("received update_rpc %s\n", obj_desc_sprint(&in_odsc));
     ABT_mutex_lock(server->sspace_mutex);
@@ -1180,7 +1199,16 @@ static void obj_update_rpc(hg_handle_t handle)
     struct dht_entry *de = ssd->ent_self;
 
     ABT_mutex_lock(server->dht_mutex);
-    int err = dht_add_entry(de, &in_odsc);
+    switch(type) {
+    case DS_OBJ_NEW: 
+        err = dht_add_entry(de, &in_odsc);
+        break;
+    case DS_OBJ_OWNER:
+        err = dht_update_owner(de, &in_odsc);
+        break;
+    default:
+        fprintf(stderr, "ERROR: (%s): unknown object update type.\n", __func__);
+    }
     ABT_mutex_unlock(server->dht_mutex);
     DEBUG_OUT("Updated dht %s in server %d \n", obj_desc_sprint(&in_odsc), server->dsg->rank);
     if (err < 0)

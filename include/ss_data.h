@@ -127,6 +127,10 @@ struct dht_entry {
         int size_bb_tab;
         struct bbox             *bb_tab;
 
+        ABT_mutex *hash_mutex;
+        ABT_cond *hash_cond;
+        struct list_head *dht_subs;
+
         int     odsc_size, odsc_num;
         struct list_head  odsc_hash[1];
 };

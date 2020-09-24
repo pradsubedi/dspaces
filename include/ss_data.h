@@ -103,6 +103,14 @@ typedef struct{
 
 } odsc_hdr_with_gdim;
 
+struct dht_sub_list_entry {
+    obj_descriptor *odsc; //subbed object
+    obj_descriptor **odsc_tab;
+    long remaining;
+    int pub_count;
+    struct list_head entry;
+};
+
 struct dht_entry {
         /* Global info. */
         struct sspace           *ss;

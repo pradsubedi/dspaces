@@ -890,157 +890,142 @@ static void put_local_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(put_local_rpc)
 
-
 static void query_rpc(hg_handle_t handle)
 {
-    hg_return_t hret;
+    margo_instance_id mid;
+    const struct hg_info *info;
+    dspaces_provider_t server;
     odsc_gdim_t in;
     odsc_list_t out;
-    margo_instance_id mid = margo_hg_handle_get_instance(handle);
-    obj_descriptor *odsc_tab_all;
-    obj_descriptor **odsc_tab;
-    struct sspace *ssd;
-    int *odsc_nums;
-    int total_odscs = 0;
+    obj_descriptor in_odsc;
     int timeout;
+    struct global_dimension in_gdim;
+    struct sspace *ssd;
+    struct dht_entry **de_tab;
+    int peer_num;
+    int self_id_num = -1;
+    int total_odscs = 0;
+    int *odsc_nums;
+    obj_descriptor **odsc_tabs, **podsc;
+    obj_descriptor *odsc_curr, *odsc_tab_all;
+    margo_request *serv_reqs;
+    hg_handle_t *hndls;
+    hg_addr_t server_addr;
+    odsc_list_t dht_resp;
+    int i, j;
+    hg_return_t hret;
 
-    const struct hg_info* info = margo_get_info(handle);
-    dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
-
-    DEBUG_OUT("received query\n");
-
+    // unwrap context and input from margo
+    mid = margo_hg_handle_get_instance(handle);
+    info = margo_get_info(handle);
+    server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
 
-    obj_descriptor in_odsc;
+    DEBUG_OUT("received query\n");
+
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
-
-    struct global_dimension od_gdim;
-    memcpy(&od_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
-
+    memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
+    timeout = in.param;
     DEBUG_OUT("Received query for %s\n",  obj_desc_sprint(&in_odsc));
-    //get the dht peers
+
     ABT_mutex_lock(server->sspace_mutex);
-    ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
+    ssd = lookup_sspace(server->dsg, in_odsc.name, &in_gdim);
     ABT_mutex_unlock(server->sspace_mutex);
-    struct dht_entry *de_tab[ssd->dht->num_entries];
-    int peer_num = ssd_hash(ssd, &(in_odsc.bb), de_tab);
-    int num_odsc;
 
-    int self_id_num = -1;
+    de_tab = malloc(sizeof(*de_tab) * ssd->dht->num_entries);
+    peer_num = ssd_hash(ssd, &(in_odsc.bb), de_tab);
 
-    DEBUG_OUT("peer_num is %d\n", peer_num);
-    odsc_tab = malloc(sizeof(obj_descriptor*) * peer_num);
-    odsc_nums = malloc(sizeof(int) * peer_num);
+    DEBUG_OUT("%d peers to query\n", peer_num);
 
+    odsc_tabs = malloc(sizeof(*odsc_tabs) * peer_num);
+    odsc_nums = calloc(sizeof(*odsc_nums), peer_num);
+    serv_reqs = malloc(sizeof(*serv_reqs) * peer_num);
+    hndls = malloc(sizeof(*hndls) * peer_num);
 
-
-    //contact dht peers to get obj_desc_list
-    margo_request *serv_req;
-    hg_handle_t *hndl;
-    hndl = (hg_handle_t*)malloc(sizeof(hg_handle_t)*peer_num);
-    serv_req = (margo_request*)malloc(sizeof(margo_request)*peer_num);
-     
-    for (int i = 0; i < peer_num; ++i)
-    {
-        odsc_nums[i] = 0;  
-
+    for(i = 0; i < peer_num; i++) {
         DEBUG_OUT("dht servr id %d\n", de_tab[i]->rank);
         DEBUG_OUT("self id %d\n", server->dsg->rank);
 
-        if(de_tab[i]->rank == server->dsg->rank){
-            //I am one of the dht servers
+        if(de_tab[i]->rank == server->dsg->rank) {
             self_id_num = i;
-            //now get obj_descriptors
-            obj_descriptor *podsc[ssd->ent_self->odsc_num];
-            num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc);
-            DEBUG_OUT("%d odscs found in %d\n",num_odsc, server->dsg->rank);
-            odsc_nums[i] = num_odsc;
-            total_odscs = total_odscs + num_odsc;
-            if (!num_odsc) {
-                continue;
-            }
-            odsc_tab[i] = malloc(sizeof(obj_descriptor) * num_odsc);
-            for (int j = 0; j < num_odsc; j++) {
-                obj_descriptor odsc;
-                odsc = *podsc[j];
-                // Preserve storage type at the destination.
-                odsc.st = in_odsc.st;
-                bbox_intersect(&in_odsc.bb, &odsc.bb, &odsc.bb);
-                odsc_tab[i][j] = odsc;
-                DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i][j]));
-            }
-        }
-        else{
-            hg_addr_t server_addr;
-            margo_addr_lookup(server->mid, server->server_address[de_tab[i]->rank], &server_addr);
-            hg_handle_t h;
-            margo_create(server->mid, server_addr, server->odsc_internal_id, &h);
-
-            margo_request req;
-            //forward notification async to all subscribers
-            margo_iforward(h, &in, &req); 
-            hndl[i] = h;
-            serv_req[i] = req;
-            margo_addr_free(server->mid, server_addr);
-        }
-        
-
-    }
-    for (int i = 0; i < peer_num ; ++i){
-        if(i == self_id_num)
             continue;
-        margo_wait(serv_req[i]);
-        //get total number of odscs;
-        odsc_list_t dht_resp;
-        //dht_resp.odsc_list.size = 0;
-        margo_get_output(hndl[i], &dht_resp);
-        if(dht_resp.odsc_list.size!=0){
-            int num_received = (dht_resp.odsc_list.size)/sizeof(obj_descriptor);
-            DEBUG_OUT("received %d odscs from peer %d\n", num_received, i);
-            odsc_nums[i] = num_received;
-            total_odscs = total_odscs + num_received;
-            odsc_tab[i] = malloc(sizeof(obj_descriptor) * num_received);
-            memcpy(odsc_tab[i], dht_resp.odsc_list.raw_odsc, dht_resp.odsc_list.size);
-
-            for (int j = 0; j < num_received; ++j)
-            {
-                obj_descriptor *print_od;
-                print_od = (obj_descriptor*)dht_resp.odsc_list.raw_odsc;
-                DEBUG_OUT("remote buffer: %s\n", obj_desc_sprint(&print_od[j]));
-            }    
-
         }
-        margo_free_output(hndl[i], &dht_resp);
-        margo_destroy(hndl[i]);
+        //remote servers
+        margo_addr_lookup(server->mid, server->server_address[de_tab[i]->rank], &server_addr);
+        margo_create(server->mid, server_addr, server->odsc_internal_id, &hndls[i]);
+        margo_iforward(hndls[i], &in, &serv_reqs[i]);
+        margo_addr_free(server->mid, server_addr);
     }
 
-    odsc_tab_all = malloc(sizeof(obj_descriptor) * total_odscs);
-    int curr_odsc_count = 0;
-    for (int i = 0; i < peer_num; ++i){
-        for (int j = 0; j < odsc_nums[i]; ++j)
-        {
-            memcpy(&odsc_tab_all[i+j*odsc_nums[i]], &odsc_tab[i][j], sizeof(obj_descriptor));
-            DEBUG_OUT("copied %s\n", obj_desc_sprint(&odsc_tab[i][j]));
-
+    if(self_id_num > -1) {
+        podsc = malloc(sizeof(*podsc) * ssd->ent_self->odsc_num);
+        odsc_nums[self_id_num] = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc, timeout);
+        DEBUG_OUT("%d odscs found in %d\n", odsc_nums[self_id_num], server->dsg->rank);
+        total_odscs += odsc_nums[self_id_num];
+        if(odsc_nums[self_id_num]) {
+            odsc_tabs[self_id_num] = malloc(sizeof(**odsc_tabs) * odsc_nums[self_id_num]);
+            for(i = 0; i < odsc_nums[self_id_num]; i++) {
+                obj_descriptor *odsc = &odsc_tabs[self_id_num][j]; //readability
+                *odsc = *podsc[i];
+                odsc->st = in_odsc.st;
+                bbox_intersect(&in_odsc.bb, &odsc->bb, &odsc->bb);
+                DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tabs[self_id_num][j]));
+            }
         }
-        free(odsc_tab[i]);
-    }
-    free(odsc_nums);
 
-    //debug
-    for (int i = 0; i < total_odscs; ++i)
-    {
-        DEBUG_OUT("Odscs in respose %s\n", obj_desc_sprint(&odsc_tab_all[i]));
+        free(podsc);
     }
 
-    out.odsc_list.size = sizeof(obj_descriptor) * total_odscs;
-    out.odsc_list.raw_odsc = (char*)odsc_tab_all;
+
+    for(i = 0; i < peer_num; i++) {
+        if(i == self_id_num) {
+            continue;
+        }
+        DEBUG_OUT("waiting for %d\n", i);
+        margo_wait(serv_reqs[i]);
+        margo_get_output(hndls[i], &dht_resp);
+        if(dht_resp.odsc_list.size != 0) {
+            odsc_nums[i] = dht_resp.odsc_list.size / sizeof(obj_descriptor);
+            DEBUG_OUT("received %d odscs from peer %d\n", odsc_nums[i], i);
+            total_odscs += odsc_nums[i];
+            odsc_tabs[i] = malloc(sizeof(**odsc_tabs) * odsc_nums[i]);
+            memcpy(odsc_tabs[i], dht_resp.odsc_list.raw_odsc, dht_resp.odsc_list.size);
+
+            for(j = 0; j < odsc_nums[i]; j++) {
+                //readability
+                obj_descriptor *odsc = (obj_descriptor *)dht_resp.odsc_list.raw_odsc;
+                DEBUG_OUT("remote buffer: %s\n", obj_desc_sprint(&odsc[j]));
+            }
+        }
+        margo_free_output(hndls[i], &dht_resp);
+        margo_destroy(hndls[i]);
+    }
+
+    odsc_curr = odsc_tab_all = malloc(sizeof(*odsc_tab_all) * total_odscs);
+
+    for(i = 0; i < peer_num; i++) {
+        memcpy(odsc_curr, odsc_tabs[i], sizeof(*odsc_curr) * odsc_nums[i]);
+        odsc_curr += odsc_nums[i];
+        free(odsc_tabs[i]);
+    }
+
+    for(i = 0; i < total_odscs; i++) {
+        DEBUG_OUT("odscs in response: %s\n", obj_desc_sprint(&odsc_tab_all[i]));
+    }
+
+    out.odsc_list.size = sizeof(*odsc_tab_all) * total_odscs;
+    out.odsc_list.raw_odsc = (char *)odsc_tab_all;
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
-    free(odsc_tab_all);
     margo_destroy(handle);
 
+    free(odsc_tab_all);
+    free(hndls);
+    free(serv_reqs);
+    free(odsc_tabs);
+    free(odsc_nums);
+    free(de_tab); 
 }
 DEFINE_MARGO_RPC_HANDLER(query_rpc)
 
@@ -1110,6 +1095,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
 {
     hg_return_t hret;
     odsc_gdim_t in;
+    int timeout;
     odsc_list_t out;
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
@@ -1121,6 +1107,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
+    timeout = in.param;
 
     struct global_dimension od_gdim;
     memcpy(&od_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
@@ -1132,7 +1119,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
     ABT_mutex_unlock(server->sspace_mutex);
     obj_descriptor *podsc[ssd->ent_self->odsc_num];
     int num_odsc;
-    num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc);
+    num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc, timeout);
     if (!num_odsc) {
         //need to figure out how to send that number of odscs is null
         out.odsc_list.size = 0;

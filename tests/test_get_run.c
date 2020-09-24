@@ -127,7 +127,7 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
 		err = dspaces_get(client, var_name, ts, elem_size, dims, lb, ub,
-			data_tab[i]);
+			data_tab[i], 0);
 		if(err!=0){
 			fprintf(stderr, "dspaces_get() returned error %d\n", err);
 			return err;

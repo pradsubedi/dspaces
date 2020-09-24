@@ -133,6 +133,7 @@ struct dht_entry {
 
         int     odsc_size, odsc_num;
         struct list_head  odsc_hash[1];
+ 
 };
 
 struct dht {
@@ -272,10 +273,11 @@ long ssh_hash_elem_count(struct sspace *ss, const struct bbox *bb);
 int ssd_filter(struct obj_data *, obj_descriptor *, double *);
 int ssd_hash(struct sspace *, const struct bbox *, struct dht_entry *[]);
 
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc);
 int dht_add_entry(struct dht_entry *, obj_descriptor *);
 obj_descriptor * dht_find_entry(struct dht_entry *, obj_descriptor *);
 int dht_find_entry_all(struct dht_entry *, obj_descriptor *, 
-                       obj_descriptor *[]);
+                       obj_descriptor *[], int);
 int dht_find_versions(struct dht_entry *, obj_descriptor *, int []);
 //
 

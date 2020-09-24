@@ -555,7 +555,7 @@ int dspaces_get (dspaces_client_t client,
         const char *var_name,
         unsigned int ver, int elem_size,
         int ndim, uint64_t *lb, uint64_t *ub, 
-        void *data)
+        void *data, int timeout)
 {
     hg_return_t hret;
     int ret = dspaces_SUCCESS;
@@ -582,6 +582,7 @@ int dspaces_get (dspaces_client_t client,
 
     in.odsc_gdim.size = sizeof(odsc);
     in.odsc_gdim.raw_odsc = (char*)(&odsc);
+    in.param = timeout;
 
     struct global_dimension od_gdim;
 

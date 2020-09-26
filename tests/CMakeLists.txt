@@ -7,6 +7,9 @@ target_link_libraries(test_reader dspaces)
 add_executable(test_writer test_writer.c test_put_run.c timer.c)
 target_link_libraries(test_writer dspaces)
 
+add_executable(terminator terminator.c)
+target_link_libraries(terminator dspaces)
+
 configure_file(
   ${PROJECT_SOURCE_DIR}/tests/test_script.sh.in
   ${PROJECT_BINARY_DIR}/tests/test_script.sh

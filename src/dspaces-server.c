@@ -43,6 +43,7 @@ struct dspaces_provider{
     hg_id_t odsc_internal_id;
     hg_id_t ss_id;
     hg_id_t drain_id;
+    hg_id_t kill_id;
     struct ds_gspace *dsg; 
     char **server_address;  
     int rank;
@@ -53,6 +54,7 @@ struct dspaces_provider{
     ABT_mutex ls_mutex;
     ABT_mutex dht_mutex;
     ABT_mutex sspace_mutex;
+    ABT_mutex kill_mutex;
 
     ABT_xstream drain_xstream;
     ABT_pool drain_pool;
@@ -67,6 +69,7 @@ DECLARE_MARGO_RPC_HANDLER(query_rpc);
 DECLARE_MARGO_RPC_HANDLER(obj_update_rpc);
 DECLARE_MARGO_RPC_HANDLER(odsc_internal_rpc);
 DECLARE_MARGO_RPC_HANDLER(ss_rpc);
+DECLARE_MARGO_RPC_HANDLER(kill_rpc);
 
 static void put_rpc(hg_handle_t h);
 static void put_local_rpc(hg_handle_t h);
@@ -75,6 +78,7 @@ static void query_rpc(hg_handle_t h);
 static void obj_update_rpc(hg_handle_t h);
 static void odsc_internal_rpc(hg_handle_t h);
 static void ss_rpc(hg_handle_t h);
+static void kill_rpc(hg_handle_t h);
 //static void write_lock_rpc(hg_handle_t h);
 //static void read_lock_rpc(hg_handle_t h);
 
@@ -508,7 +512,6 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od, obj_up
         //now send rpc to the server for dht_update
         hg_return_t hret;
         odsc_gdim_t in;
-        bulk_out_t out;
         DEBUG_OUT("Server %d sending object %s to dht server %d \n", server->dsg->rank, obj_desc_sprint(odsc), dht_tab[i]->rank);
 
         in.odsc_gdim.size = sizeof(*odsc);
@@ -542,6 +545,7 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
     bulk_out_t out;
     struct obj_data *od;
     od = malloc(sizeof(struct obj_data));
+    int ret;
 
     od = obj_data_alloc(&odsc);
     in.odsc.size = sizeof(obj_descriptor);
@@ -576,11 +580,15 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
         ls_add_obj(server->dsg->ls, od);
         ABT_mutex_unlock(server->ls_mutex);
     }
+    ret = out.ret;
     //now update the dht with new owner information
     DEBUG_OUT("Inside get_client_data\n");
     margo_addr_free(server->mid, client_addr);
+    margo_bulk_free(in.handle);
+    margo_free_output(handle, &out);
+    margo_destroy(handle);
     obj_update_dht(server, od, DS_OBJ_OWNER);
-    return out.ret;
+    return ret;
 
 }
 
@@ -609,7 +617,7 @@ static void drain_thread(void *arg)
                 
             }
             ABT_mutex_unlock(server->odsc_mutex);
-            if(counter == 1){
+            if(counter == 1) {
                 int ret = get_client_data(odsc, server);
                 DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
                 if(ret == dspaces_SUCCESS){
@@ -633,7 +641,7 @@ static void drain_thread(void *arg)
 }
 
 
-int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
+int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
 {
     const char *envdebug = getenv("DSPACES_DEBUG");
     dspaces_provider_t server;
@@ -658,19 +666,20 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
     ret = ABT_mutex_create(&server->ls_mutex);
     ret = ABT_mutex_create(&server->dht_mutex);
     ret = ABT_mutex_create(&server->sspace_mutex);
+    ret = ABT_mutex_create(&server->kill_mutex);
     
     margo_registered_name(server->mid, "put_rpc", &id, &flag);
 
     if(flag == HG_TRUE) { /* RPCs already registered */
-        margo_registered_name(server->mid, "put_rpc",           &server->put_id,                   &flag);
-        margo_registered_name(server->mid, "put_local_rpc",     &server->put_local_id,                   &flag);
-        margo_registered_name(server->mid, "get_rpc",           &server->get_id,                   &flag);
-        margo_registered_name(server->mid, "query_rpc",         &server->query_id,                   &flag);
-        margo_registered_name(server->mid, "obj_update_rpc",    &server->obj_update_id,                   &flag);
-        margo_registered_name(server->mid, "odsc_internal_rpc", &server->odsc_internal_id,                   &flag);
-        margo_registered_name(server->mid, "ss_rpc",            &server->ss_id,                   &flag);
-        margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,                   &flag);
-   
+        margo_registered_name(server->mid, "put_rpc",           &server->put_id,            &flag);
+        margo_registered_name(server->mid, "put_local_rpc",     &server->put_local_id,      &flag);
+        margo_registered_name(server->mid, "get_rpc",           &server->get_id,            &flag);
+        margo_registered_name(server->mid, "query_rpc",         &server->query_id,          &flag);
+        margo_registered_name(server->mid, "obj_update_rpc",    &server->obj_update_id,     &flag);
+        margo_registered_name(server->mid, "odsc_internal_rpc", &server->odsc_internal_id,  &flag);
+        margo_registered_name(server->mid, "ss_rpc",            &server->ss_id,             &flag);
+        margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,          &flag);
+        margo_registered_name(server->mid, "kill_rpc",          &server->kill_id,           &flag);
     } else {
 
         server->put_id =
@@ -686,8 +695,9 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
             MARGO_REGISTER(server->mid, "query_rpc", odsc_gdim_t, odsc_list_t, query_rpc);
         margo_register_data(server->mid, server->query_id, (void*)server, NULL);
         server->obj_update_id =
-            MARGO_REGISTER(server->mid, "obj_update_rpc", odsc_gdim_t, bulk_out_t, obj_update_rpc);
+            MARGO_REGISTER(server->mid, "obj_update_rpc", odsc_gdim_t, void, obj_update_rpc);
         margo_register_data(server->mid, server->obj_update_id, (void*)server, NULL);
+        margo_registered_disable_response(server->mid, server->obj_update_id, HG_TRUE);
         server->odsc_internal_id =
             MARGO_REGISTER(server->mid, "odsc_internal_rpc", odsc_gdim_t, odsc_list_t, odsc_internal_rpc);
         margo_register_data(server->mid, server->odsc_internal_id, (void*)server, NULL);
@@ -696,7 +706,11 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
         margo_register_data(server->mid, server->ss_id, (void*)server, NULL);
         server->drain_id =
             MARGO_REGISTER(server->mid, "drain_rpc", bulk_in_t, bulk_out_t, NULL);
-
+        server->kill_id =
+            MARGO_REGISTER(server->mid, "kill_rpc", int32_t, void, kill_rpc);
+        margo_registered_disable_response(server->mid, server->kill_id, HG_TRUE);
+        margo_register_data(server->mid, server->kill_id, (void*)server, NULL);
+        
     }
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
@@ -713,11 +727,14 @@ int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
     return dspaces_SUCCESS;
 }
 
-int server_destroy(dspaces_provider_t server)
+static int server_destroy(dspaces_provider_t server)
 {
-    DEBUG_OUT("waiting for finalize.\n");
-    margo_wait_for_finalize(server->mid);
-    DEBUG_OUT("got finalize.\n");
+    int i;
+
+    ABT_thread_free(&server->drain_t);
+    ABT_xstream_join(server->drain_xstream);
+    ABT_xstream_free(&server->drain_xstream);
+    DEBUG_OUT("drain thread stopped.\n");
 
     margo_deregister(server->mid, server->put_id);
     margo_deregister(server->mid, server->put_local_id);
@@ -726,12 +743,8 @@ int server_destroy(dspaces_provider_t server)
     margo_deregister(server->mid, server->obj_update_id);
     margo_deregister(server->mid, server->odsc_internal_id);
     margo_deregister(server->mid, server->ss_id);
+    margo_deregister(server->mid, server->kill_id);
     /* deregister other RPC ids ... */
-
-    server->f_kill = 1;
-    ABT_thread_free(&server->drain_t);
-    ABT_xstream_join(server->drain_xstream);
-    ABT_xstream_free(&server->drain_xstream);
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);
@@ -740,9 +753,6 @@ int server_destroy(dspaces_provider_t server)
     free(server->server_address);
     margo_finalize(server->mid);
     free(server);
-   
-    return dspaces_SUCCESS;
-
 }
 
 static void put_rpc(hg_handle_t handle)
@@ -834,7 +844,6 @@ static void put_local_rpc(hg_handle_t handle)
     hg_return_t hret;
     odsc_gdim_t in;
     bulk_out_t out;
-    hg_bulk_t bulk_handle;
 
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
@@ -966,11 +975,11 @@ static void query_rpc(hg_handle_t handle)
         if(odsc_nums[self_id_num]) {
             odsc_tabs[self_id_num] = malloc(sizeof(**odsc_tabs) * odsc_nums[self_id_num]);
             for(i = 0; i < odsc_nums[self_id_num]; i++) {
-                obj_descriptor *odsc = &odsc_tabs[self_id_num][j]; //readability
+                obj_descriptor *odsc = &odsc_tabs[self_id_num][i]; //readability
                 *odsc = *podsc[i];
                 odsc->st = in_odsc.st;
                 bbox_intersect(&in_odsc.bb, &odsc->bb, &odsc->bb);
-                DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tabs[self_id_num][j]));
+                DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tabs[self_id_num][i]));
             }
         }
 
@@ -1086,6 +1095,7 @@ static void get_rpc(hg_handle_t handle)
     obj_data_free(od);
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
+    margo_bulk_free(bulk_handle);
     margo_destroy(handle);
 }
 DEFINE_MARGO_RPC_HANDLER(get_rpc)
@@ -1201,9 +1211,6 @@ static void obj_update_rpc(hg_handle_t handle)
     if (err < 0)
         fprintf(stderr, "ERROR (%s): obj_update_rpc Failed with %d\n", __func__, err);
 
-    bulk_out_t out;
-    out.ret = dspaces_SUCCESS;
-    margo_respond(handle, &out);
     margo_free_input(handle, &in);
     margo_destroy(handle);
 }
@@ -1239,4 +1246,65 @@ static void ss_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(ss_rpc)
 
+static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
+{
+    //TODO: error handling/reporting
+    hg_addr_t server_addr;
+    hg_handle_t h;
 
+    margo_addr_lookup(server->mid, server->server_address[target], &server_addr);
+    margo_create(server->mid, server_addr, server->kill_id, &h);
+    HANDLE_DEBUG(h);
+    margo_forward(h, rank);
+    margo_addr_free(server->mid, server_addr);
+    margo_destroy(h);
+}
+
+static void kill_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    int32_t src, rank, parent, child1, child2;
+    hg_return_t hret;
+    HANDLE_DEBUG(handle);
+
+    hret = margo_get_input(handle, &src);
+    DEBUG_OUT("Received kill signal from %d.\n", src);
+
+    rank = server->dsg->rank;
+    parent = (rank - 1) / 2;
+    child1 = (rank * 2) + 1;
+    child2 = child1 + 1;
+
+    ABT_mutex_lock(server->kill_mutex);
+    if(server->f_kill) {
+        ABT_mutex_unlock(server->kill_mutex);
+        margo_free_input(handle, &src);
+        margo_destroy(handle);
+        return;
+    }
+    DEBUG_OUT("Setting kill flag.\n");
+    server->f_kill = 1;
+    ABT_mutex_unlock(server->kill_mutex);
+
+    if((src == -1 || src > rank) && rank > 0) {
+        send_kill_rpc(server, parent, &rank);
+    }
+    if((child1 != src && child1 < server->dsg->size_sp)) {
+        send_kill_rpc(server, child1, &rank);
+    }
+    if((child2 != src && child2 < server->dsg->size_sp)) {
+        send_kill_rpc(server, child2, &rank);
+    }
+
+    margo_free_input(handle, &src);
+    margo_destroy(handle);
+    server_destroy(server); 
+}
+DEFINE_MARGO_RPC_HANDLER(kill_rpc)
+
+void dspaces_server_fini(dspaces_provider_t server)
+{
+    margo_wait_for_finalize(server->mid);
+}

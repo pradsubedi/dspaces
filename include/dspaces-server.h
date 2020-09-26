@@ -31,17 +31,16 @@ typedef struct dspaces_provider* dspaces_provider_t;
  * @param[in] debug enable debugging
  * @return MESSAGING_SUCCESS or error code defined in messaging-common.h
  */
-int server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* server);
+int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* server);
 	
 
 /**
- * @brief Destroys the Messaging server and deregisters its RPC.
+ * @brief Waits for the dataspaces server to finish (be killed.)
  *
  * @param[in] server Messaging server
  *
- * @return MESSAGING_SUCCESS or error code defined in messaging-common.h
  */
-int server_destroy(dspaces_provider_t server);
+void dspaces_server_fini(dspaces_provider_t server);
 
 
 #if defined(__cplusplus)

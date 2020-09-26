@@ -38,6 +38,7 @@ struct dspaces_client {
     hg_id_t query_id;
     hg_id_t ss_id;
     hg_id_t drain_id;
+    hg_id_t kill_id;
     struct dc_gspace *dcg;
     char **server_address;
     int size_sp;
@@ -54,13 +55,11 @@ static void drain_rpc(hg_handle_t h);
 
 //round robin fashion
 //based on how many clients processes are connected to the server
-static hg_addr_t get_server_address(dspaces_client_t client){
- 
+static hg_return_t get_server_address(dspaces_client_t client, hg_addr_t *server_addr)
+{ 
     int peer_id = client->rank % client->size_sp;
-    hg_addr_t svr_addr;
-    margo_addr_lookup(client->mid, client->server_address[peer_id], &svr_addr);
-    return svr_addr;
-
+ 
+    return(margo_addr_lookup(client->mid, client->server_address[peer_id], server_addr));
 }
 
 
@@ -68,12 +67,13 @@ static int get_ss_info(dspaces_client_t client){
     hg_return_t hret;
     hg_handle_t handle;
     ss_information out;
-    int ret = dspaces_SUCCESS;
+    hg_addr_t server_addr;
     hg_size_t my_addr_size;
+    int ret = dspaces_SUCCESS;
 
     char *my_addr_str = NULL;
 
-    hg_addr_t server_addr = get_server_address(client);
+    get_server_address(client, &server_addr);
 
     /* create handle */
     hret = margo_create(client->mid, server_addr, client->ss_id, &handle);
@@ -109,7 +109,6 @@ static int get_ss_info(dspaces_client_t client){
     margo_destroy(handle);
     margo_addr_free(client->mid, server_addr);
     return ret;
-
 }
 
 static struct dc_gspace * dcg_alloc(dspaces_client_t client)
@@ -237,7 +236,7 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
         margo_registered_name(client->mid, "query_rpc",     &client->query_id, &flag);
         margo_registered_name(client->mid, "ss_rpc",        &client->ss_id, &flag);
         margo_registered_name(client->mid, "drain_rpc",     &client->drain_id, &flag);
-   
+        margo_registered_name(client->mid, "kill_rpc",      &client->kill_id, &flag); 
     } else {
 
         client->put_id =
@@ -254,7 +253,9 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
         client->drain_id =
             MARGO_REGISTER(client->mid, "drain_rpc", bulk_in_t, bulk_out_t, drain_rpc);
         margo_register_data(client->mid, client->drain_id, (void*)client, NULL);
-
+        client->kill_id =
+            MARGO_REGISTER(client->mid, "kill_rpc", int32_t, void, NULL);
+        margo_registered_disable_response(client->mid, client->kill_id, HG_TRUE);            
     }
     //now do dcg_alloc and store gid
 
@@ -322,9 +323,10 @@ int dspaces_put (dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub, 
         void *data)
 {
+    hg_addr_t server_addr;
+    hg_handle_t handle;
 	hg_return_t hret;
     int ret = dspaces_SUCCESS;
-    hg_handle_t handle;
 
     obj_descriptor odsc = {
             .version = ver, .owner = {0}, 
@@ -364,7 +366,7 @@ int dspaces_put (dspaces_client_t client,
         return dspaces_ERR_MERCURY;
     }
     
-    hg_addr_t server_addr = get_server_address(client);
+    get_server_address(client, &server_addr);
     /* create handle */
     hret = margo_create( client->mid,
             server_addr,
@@ -469,9 +471,10 @@ int dspaces_put_local (dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub, 
         void *data)
 {
+    hg_addr_t server_addr;
+    hg_handle_t handle;
     hg_return_t hret;
     int ret = dspaces_SUCCESS;
-    hg_handle_t handle;
 
     client->local_put_count++;
 
@@ -519,7 +522,7 @@ int dspaces_put_local (dspaces_client_t client,
 
     DEBUG_OUT("sending object information %s \n", obj_desc_sprint(&odsc));
     
-    hg_addr_t server_addr = get_server_address(client);
+    get_server_address(client, &server_addr);
     /* create handle */
     hret = margo_create( client->mid,
             server_addr,
@@ -557,9 +560,10 @@ int dspaces_get (dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub, 
         void *data, int timeout)
 {
+    hg_addr_t server_addr;
+    hg_handle_t handle;
     hg_return_t hret;
     int ret = dspaces_SUCCESS;
-    hg_handle_t handle;
 
     obj_descriptor odsc = {
             .version = ver, .owner = {0}, 
@@ -592,7 +596,7 @@ int dspaces_get (dspaces_client_t client,
     in.odsc_gdim.gdim_size = sizeof(struct global_dimension);
     in.odsc_gdim.raw_gdim = (char*)(&od_gdim);
 
-    hg_addr_t server_addr = get_server_address(client);
+    get_server_address(client, &server_addr);
 
     hret = margo_create( client->mid,
             server_addr,
@@ -774,9 +778,37 @@ static void drain_rpc(hg_handle_t handle)
     pthread_mutex_lock(&drain_mutex);
     client->local_put_count--;
     if(client->local_put_count == 0 && client->f_final) {
+        DEBUG_OUT("signaling all objects drained.\n");
         pthread_cond_signal(&drain_cond);
     }
     pthread_mutex_unlock(&drain_mutex);
-
+    DEBUG_OUT("%d objects left to drain...\n", client->local_put_count);
 }
 DEFINE_MARGO_RPC_HANDLER(drain_rpc)
+
+void dspaces_kill(dspaces_client_t client)
+{
+    uint32_t in;
+    hg_addr_t server_addr;
+    hg_handle_t h;
+    hg_return_t hret;
+
+    in = -1;
+
+    DEBUG_OUT("sending kill signal to servers.\n");
+
+    get_server_address(client, &server_addr);
+    hret = margo_create(client->mid, server_addr, client->kill_id, &h);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"ERROR: (%s): margo_create() failed\n", __func__);
+        margo_addr_free(client->mid, server_addr);
+        return;
+    }
+    margo_forward(h, &in);
+
+    DEBUG_OUT("kill signal sent.\n");
+
+    margo_addr_free(client->mid, server_addr);
+    margo_destroy(h);
+    
+}

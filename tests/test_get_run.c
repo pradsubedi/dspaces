@@ -210,6 +210,10 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 	}
 	tm_st = timer_read(&timer_);
 
+    if(rank_ == 0) {
+        dspaces_kill(ndcl);
+    }
+
     client_finalize(ndcl);
 	tm_end = timer_read(&timer_);
 

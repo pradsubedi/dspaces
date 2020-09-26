@@ -156,6 +156,16 @@ int dspaces_get (dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub, 
         void *data, int timeout);
 
+/**
+ * @brief send signal to kill server group.
+ *
+ * Only one client process needs to send the kill process.
+ * The kill signal is propagated between server processes. 
+ *
+ * @param[in] client dspaces client
+ */
+void dspaces_kill(dspaces_client_t client);
+
 #if defined(__cplusplus)
 }
 #endif

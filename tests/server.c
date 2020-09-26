@@ -31,11 +31,11 @@ int main(int argc, char** argv)
     int color = 1;
     MPI_Comm_split(MPI_COMM_WORLD, color, rank, &gcomm);
 
-    int ret = server_init(listen_addr_str, gcomm, &s);
+    int ret = dspaces_server_init(listen_addr_str, gcomm, &s);
     if(ret != 0) return ret;
 
     // make margo wait for finalize
-    server_destroy(s);
+    dspaces_server_fini(s);
     
     MPI_Finalize();
     return 0;

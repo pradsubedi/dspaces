@@ -526,12 +526,14 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od, obj_up
         hg_handle_t h;
         margo_create(server->mid, svr_addr, server->obj_update_id, &h);
         margo_forward(h, &in);
-        margo_get_output(h, &out);
-
         DEBUG_OUT("sent obj server %d to update dht %s in \n", dht_tab[i]->rank, obj_desc_sprint(odsc));
 
         margo_addr_free(server->mid, svr_addr);
-        margo_destroy(h);
+        hret = margo_destroy(h);
+        if(hret != HG_SUCCESS) {
+            fprintf(stderr, "ERROR: (%s): could not destroy handle!\n", __func__);
+            return(dspaces_ERR_MERCURY);    
+        }
         return dspaces_SUCCESS;
 
     }
@@ -563,7 +565,6 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
 
     margo_bulk_create(server->mid, 1, (void**)(&(od->data)), &rdma_size,
                             HG_BULK_WRITE_ONLY, &in.handle);
-
     hg_addr_t client_addr;
     margo_addr_lookup(server->mid, odsc.owner, &client_addr);
 
@@ -572,7 +573,6 @@ static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
         client_addr,
         server->drain_id,
         &handle);
-
     margo_forward(handle, &in);
     margo_get_output(handle, &out);
     if(out.ret == dspaces_SUCCESS){
@@ -766,7 +766,6 @@ static void put_rpc(hg_handle_t handle)
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
-
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
 
@@ -1254,7 +1253,6 @@ static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
 
     margo_addr_lookup(server->mid, server->server_address[target], &server_addr);
     margo_create(server->mid, server_addr, server->kill_id, &h);
-    HANDLE_DEBUG(h);
     margo_forward(h, rank);
     margo_addr_free(server->mid, server_addr);
     margo_destroy(h);
@@ -1267,7 +1265,6 @@ static void kill_rpc(hg_handle_t handle)
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     int32_t src, rank, parent, child1, child2;
     hg_return_t hret;
-    HANDLE_DEBUG(handle);
 
     hret = margo_get_input(handle, &src);
     DEBUG_OUT("Received kill signal from %d.\n", src);

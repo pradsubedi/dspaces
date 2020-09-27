@@ -762,6 +762,8 @@ static void put_rpc(hg_handle_t handle)
     bulk_out_t out;
     hg_bulk_t bulk_handle;
 
+    fprintf(stderr, "server in %s\n", __func__);
+
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -844,6 +846,8 @@ static void put_local_rpc(hg_handle_t handle)
     odsc_gdim_t in;
     bulk_out_t out;
 
+    fprintf(stderr, "server in %s\n", __func__);
+
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -922,6 +926,8 @@ static void query_rpc(hg_handle_t handle)
     odsc_list_t dht_resp;
     int i, j;
     hg_return_t hret;
+
+    fprintf(stderr, "server in %s\n", __func__);
 
     // unwrap context and input from margo
     mid = margo_hg_handle_get_instance(handle);
@@ -1046,6 +1052,8 @@ static void get_rpc(hg_handle_t handle)
     bulk_out_t out;
     hg_bulk_t bulk_handle;
 
+    fprintf(stderr, "server in %s\n", __func__);
+
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1106,6 +1114,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
     odsc_gdim_t in;
     int timeout;
     odsc_list_t out;
+    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1172,6 +1181,7 @@ static void obj_update_rpc(hg_handle_t handle)
     obj_update_t type;
     int err;
 
+    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1220,6 +1230,7 @@ static void ss_rpc(hg_handle_t handle)
 {
     ss_information out;
 
+    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1250,6 +1261,8 @@ static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
     //TODO: error handling/reporting
     hg_addr_t server_addr;
     hg_handle_t h;
+   
+    fprintf(stderr, "server in %s\n", __func__);
 
     margo_addr_lookup(server->mid, server->server_address[target], &server_addr);
     margo_create(server->mid, server_addr, server->kill_id, &h);
@@ -1260,6 +1273,7 @@ static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
 
 static void kill_rpc(hg_handle_t handle)
 {
+    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);

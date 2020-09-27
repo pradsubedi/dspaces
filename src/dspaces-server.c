@@ -739,6 +739,7 @@ static int server_destroy(dspaces_provider_t server)
     DEBUG_OUT("drain thread stopped.\n");
     fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
+/*
     margo_deregister(server->mid, server->put_id);
     margo_deregister(server->mid, server->put_local_id);
     margo_deregister(server->mid, server->get_id);
@@ -747,7 +748,8 @@ static int server_destroy(dspaces_provider_t server)
     margo_deregister(server->mid, server->odsc_internal_id);
     margo_deregister(server->mid, server->ss_id);
     margo_deregister(server->mid, server->kill_id);
-    /* deregister other RPC ids ... */
+*/ 
+   /* deregister other RPC ids ... */
     fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
     free_sspace(server->dsg);

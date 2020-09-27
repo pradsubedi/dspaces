@@ -730,11 +730,14 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
 static int server_destroy(dspaces_provider_t server)
 {
     int i;
+    char c;
 
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     ABT_thread_free(&server->drain_t);
     ABT_xstream_join(server->drain_xstream);
     ABT_xstream_free(&server->drain_xstream);
     DEBUG_OUT("drain thread stopped.\n");
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
     margo_deregister(server->mid, server->put_id);
     margo_deregister(server->mid, server->put_local_id);
@@ -745,6 +748,7 @@ static int server_destroy(dspaces_provider_t server)
     margo_deregister(server->mid, server->ss_id);
     margo_deregister(server->mid, server->kill_id);
     /* deregister other RPC ids ... */
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);
@@ -752,6 +756,7 @@ static int server_destroy(dspaces_provider_t server)
     free(server->server_address[0]);
     free(server->server_address);
     margo_finalize(server->mid);
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     free(server);
 }
 
@@ -1273,7 +1278,8 @@ static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
 
 static void kill_rpc(hg_handle_t handle)
 {
-    fprintf(stderr, "server in %s\n", __func__);
+    char c = 'a';
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
@@ -1282,6 +1288,8 @@ static void kill_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &src);
     DEBUG_OUT("Received kill signal from %d.\n", src);
+
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
     rank = server->dsg->rank;
     parent = (rank - 1) / 2;
@@ -1299,6 +1307,8 @@ static void kill_rpc(hg_handle_t handle)
     server->f_kill = 1;
     ABT_mutex_unlock(server->kill_mutex);
 
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
+
     if((src == -1 || src > rank) && rank > 0) {
         send_kill_rpc(server, parent, &rank);
     }
@@ -1309,9 +1319,12 @@ static void kill_rpc(hg_handle_t handle)
         send_kill_rpc(server, child2, &rank);
     }
 
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     margo_free_input(handle, &src);
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     margo_destroy(handle);
-    server_destroy(server); 
+    fprintf(stderr, "server in %s, %c\n", __func__, c++);
+    server_destroy(server);
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)
 

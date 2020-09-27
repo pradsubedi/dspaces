@@ -311,7 +311,6 @@ static int write_address(dspaces_provider_t server, MPI_Comm comm){
         }
         close(fd);
     }
-//    margo_addr_free(server->mid, my_addr);
     free(my_addr_str);
     free(sizes);
     free(sizes_psum);
@@ -730,27 +729,11 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
 static int server_destroy(dspaces_provider_t server)
 {
     int i;
-    char c;
 
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     ABT_thread_free(&server->drain_t);
     ABT_xstream_join(server->drain_xstream);
     ABT_xstream_free(&server->drain_xstream);
     DEBUG_OUT("drain thread stopped.\n");
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
-
-/*
-    margo_deregister(server->mid, server->put_id);
-    margo_deregister(server->mid, server->put_local_id);
-    margo_deregister(server->mid, server->get_id);
-    margo_deregister(server->mid, server->query_id);
-    margo_deregister(server->mid, server->obj_update_id);
-    margo_deregister(server->mid, server->odsc_internal_id);
-    margo_deregister(server->mid, server->ss_id);
-    margo_deregister(server->mid, server->kill_id);
-*/ 
-   /* deregister other RPC ids ... */
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);
@@ -758,7 +741,6 @@ static int server_destroy(dspaces_provider_t server)
     free(server->server_address[0]);
     free(server->server_address);
     margo_finalize(server->mid);
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     free(server);
 }
 
@@ -768,8 +750,6 @@ static void put_rpc(hg_handle_t handle)
     bulk_gdim_t in;
     bulk_out_t out;
     hg_bulk_t bulk_handle;
-
-    fprintf(stderr, "server in %s\n", __func__);
 
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
@@ -840,9 +820,6 @@ static void put_rpc(hg_handle_t handle)
     obj_update_dht(server, od, DS_OBJ_NEW);
     DEBUG_OUT("Finished obj_put_update from put_rpc\n");
 
-    //do write unlock;
-
-    
 }
 DEFINE_MARGO_RPC_HANDLER(put_rpc)
 
@@ -852,8 +829,6 @@ static void put_local_rpc(hg_handle_t handle)
     hg_return_t hret;
     odsc_gdim_t in;
     bulk_out_t out;
-
-    fprintf(stderr, "server in %s\n", __func__);
 
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
@@ -880,7 +855,6 @@ static void put_local_rpc(hg_handle_t handle)
 
    
     //now update the dht
-
     obj_update_dht(server, od, DS_OBJ_NEW);
     DEBUG_OUT("Finished obj_put_local_update in local_put\n");
 
@@ -894,18 +868,13 @@ static void put_local_rpc(hg_handle_t handle)
     list_add_tail(&odscl->odsc_entry, &server->dsg->obj_desc_drain_list);
     ABT_mutex_unlock(server->odsc_mutex);
 
-    //wake up thread to initiate draining
-    //pthread_mutex_lock(&pmutex);
-    //pthread_cond_signal(&pcond);
-    //pthread_mutex_unlock(&pmutex);
+    //TODO: wake up thread to initiate draining
     out.ret = dspaces_SUCCESS;
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
     margo_destroy(handle);
     
     free(od);
-
-    
 }
 DEFINE_MARGO_RPC_HANDLER(put_local_rpc)
 
@@ -933,8 +902,6 @@ static void query_rpc(hg_handle_t handle)
     odsc_list_t dht_resp;
     int i, j;
     hg_return_t hret;
-
-    fprintf(stderr, "server in %s\n", __func__);
 
     // unwrap context and input from margo
     mid = margo_hg_handle_get_instance(handle);
@@ -1050,16 +1017,12 @@ static void query_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(query_rpc)
 
-
-
 static void get_rpc(hg_handle_t handle)
 {
     hg_return_t hret;
     bulk_in_t in;
     bulk_out_t out;
     hg_bulk_t bulk_handle;
-
-    fprintf(stderr, "server in %s\n", __func__);
 
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
@@ -1121,7 +1084,6 @@ static void odsc_internal_rpc(hg_handle_t handle)
     odsc_gdim_t in;
     int timeout;
     odsc_list_t out;
-    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1237,7 +1199,6 @@ static void ss_rpc(hg_handle_t handle)
 {
     ss_information out;
 
-    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1269,8 +1230,6 @@ static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
     hg_addr_t server_addr;
     hg_handle_t h;
    
-    fprintf(stderr, "server in %s\n", __func__);
-
     margo_addr_lookup(server->mid, server->server_address[target], &server_addr);
     margo_create(server->mid, server_addr, server->kill_id, &h);
     margo_forward(h, rank);
@@ -1280,8 +1239,6 @@ static void send_kill_rpc(dspaces_provider_t server, int target, int *rank)
 
 static void kill_rpc(hg_handle_t handle)
 {
-    char c = 'a';
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
@@ -1290,8 +1247,6 @@ static void kill_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &src);
     DEBUG_OUT("Received kill signal from %d.\n", src);
-
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
 
     rank = server->dsg->rank;
     parent = (rank - 1) / 2;
@@ -1309,8 +1264,6 @@ static void kill_rpc(hg_handle_t handle)
     server->f_kill = 1;
     ABT_mutex_unlock(server->kill_mutex);
 
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
-
     if((src == -1 || src > rank) && rank > 0) {
         send_kill_rpc(server, parent, &rank);
     }
@@ -1321,11 +1274,8 @@ static void kill_rpc(hg_handle_t handle)
         send_kill_rpc(server, child2, &rank);
     }
 
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     margo_free_input(handle, &src);
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     margo_destroy(handle);
-    fprintf(stderr, "server in %s, %c\n", __func__, c++);
     server_destroy(server);
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)

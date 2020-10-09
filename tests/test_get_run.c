@@ -57,14 +57,14 @@ static void set_offset_nd(int rank, int dims)
 	}
 }
 
-void check_data(const char *var_name, double *buf, int num_elem, int rank, int ts)
+int check_data(const char *var_name, double *buf, int num_elem, int rank, int ts)
 {
         double max, min, sum, avg;
         int i;
         int cnt = 0;
 
         if (num_elem <= 0) {
-                return;
+                return -EINVAL;
         }
         max = min = sum = buf[0];
         for (i = 1; i < num_elem; i++) {
@@ -84,7 +84,7 @@ void check_data(const char *var_name, double *buf, int num_elem, int rank, int t
                         __func__, var_name, rank, ts, cnt, num_elem);
         }
 
-        return;
+        return cnt;
 }
 
 static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars, int dims)
@@ -123,12 +123,13 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
 
 	MPI_Barrier(gcomm_);
     tm_st = timer_read(&timer_);
+    int ret;
     int err = 0;
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
 		err = dspaces_get(client, var_name, ts, elem_size, dims, lb, ub,
-			data_tab[i], 0);
+			data_tab[i], -1);
 		if(err!=0){
 			fprintf(stderr, "dspaces_get() returned error %d\n", err);
 			return err;
@@ -147,15 +148,18 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
 
 	for (i = 0; i < num_vars; i++) {
 		sprintf(var_name, "mnd_%d", i);
-		check_data(var_name, data_tab[i],dims_size*elem_size_/sizeof(double),
+		err = check_data(var_name, data_tab[i],dims_size*elem_size_/sizeof(double),
 			rank_, ts);
+        if(err > 0) {
+             ret = -EIO;
+        }
         if (data_tab[i]) {
             free(data_tab[i]);
         }
     }
     free(data_tab);
 
-    return 0;
+    return ret;
 }
 
 int test_get_run(char *listen_addr, int ndims, int* npdim, 

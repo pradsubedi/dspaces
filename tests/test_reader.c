@@ -57,6 +57,7 @@ int main(int argc, char **argv)
 	int err;
 	int nprocs, rank;
 	MPI_Comm gcomm;
+    int ret;
 
     int npapp; // number of application processes
     int np[10] = {0};	//number of processes in each dimension
@@ -84,13 +85,13 @@ int main(int argc, char **argv)
 
 	// Run as data reader
 
-	test_get_run(listen_addr, dims, np,
+	ret = test_get_run(listen_addr, dims, np,
 		sp, timestep, elem_size, num_vars, gcomm);
 
 	MPI_Barrier(gcomm);
 	MPI_Finalize();
 
-	return 0;	
+	return ret;	
 err_out:
 	fprintf(stderr, "error out!\n");
 	return -1;	

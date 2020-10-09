@@ -219,10 +219,16 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
         client->f_debug = 1;
     }
 
+    client->rank = rank;
+
+    //now do dcg_alloc and store gid
+    client->dcg = dcg_alloc(client);
+
+    if(!(client->dcg))
+        return dspaces_ERR_ALLOCATION;
+
     client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
     assert(client->mid);
-
-    client->rank = rank;
 
     /* check if RPCs have already been registered */
     hg_bool_t flag;
@@ -257,12 +263,6 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
             MARGO_REGISTER(client->mid, "kill_rpc", int32_t, void, NULL);
         margo_registered_disable_response(client->mid, client->kill_id, HG_TRUE);            
     }
-    //now do dcg_alloc and store gid
-
-    client->dcg = dcg_alloc(client);
-
-    if(!(client->dcg))
-        return dspaces_ERR_ALLOCATION;
 
     build_address(client);
 
@@ -287,10 +287,14 @@ int client_finalize(dspaces_client_t client)
         pthread_mutex_lock(&drain_mutex);
         client->f_final = 1;
 
-        if(client->local_put_count > 0)
+        if(client->local_put_count > 0) {
+            DEBUG_OUT("waiting for pending drainage. %d object remain.\n", client->local_put_count);
             pthread_cond_wait(&drain_cond, &drain_mutex);
+        }
         pthread_mutex_unlock(&drain_mutex);
     } while(client->local_put_count > 0);
+
+    DEBUG_OUT("all objects drained. Finalizing...\n");
 
     free_gdim_list(&client->dcg->gdim_list);
     free(client->server_address[0]);

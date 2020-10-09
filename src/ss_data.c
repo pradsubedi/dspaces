@@ -1384,6 +1384,7 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
     struct obj_desc_list *odscl;
     struct dht_sub_list_entry *sub, *tmp;
     struct bbox isect;
+    int sub_complete = 0;
     int n, err = -ENOMEM;
 
     odscl = dht_find_match(de, odsc);
@@ -1413,12 +1414,19 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
         if(bbox_does_intersect(&odsc->bb, &sub->odsc->bb)) {
             bbox_intersect(&odsc->bb, &sub->odsc->bb, &isect);
             sub->remaining -= bbox_volume(&isect);
+            *sub->odsc_tab = &odscl->odsc;
+            sub->odsc_tab++;
             sub->pub_count++;
             if(sub->remaining == 0) {
+                sub_complete = 1;
                 list_del(&sub->entry);
             }
         }
     }
+    if(sub_complete) {
+        ABT_cond_broadcast(de->hash_cond[n]);
+    }
+
     ABT_mutex_unlock(de->hash_mutex[n]);
 
     return 0;

@@ -50,6 +50,8 @@ struct dspaces_provider{
     int f_debug;
     int f_kill;
 
+    MPI_Comm comm;
+
     ABT_mutex odsc_mutex;
     ABT_mutex ls_mutex;
     ABT_mutex dht_mutex;
@@ -656,6 +658,7 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         server->f_debug = 1;
     }
 
+    MPI_Comm_dup(comm, &server->comm);
     MPI_Comm_rank(comm, &server->rank);
 
     server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
@@ -730,6 +733,11 @@ static int server_destroy(dspaces_provider_t server)
 {
     int i;
 
+    MPI_Barrier(server->comm);
+    if(server->rank == 0) {
+        fprintf(stderr, "Finishing up, waiting for asynchronous jobs to finish...\n");
+    }
+
     ABT_thread_free(&server->drain_t);
     ABT_xstream_join(server->drain_xstream);
     ABT_xstream_free(&server->drain_xstream);
@@ -740,6 +748,12 @@ static int server_destroy(dspaces_provider_t server)
     free(server->dsg);
     free(server->server_address[0]);
     free(server->server_address);
+
+    MPI_Barrier(server->comm);
+    MPI_Comm_free(&server->comm);
+    if(server->rank == 0) {
+        fprintf(stderr, "Finalizing servers.\n");
+    }
     margo_finalize(server->mid);
     free(server);
 }
@@ -1099,6 +1113,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
     struct global_dimension od_gdim;
     memcpy(&od_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
 
+    DEBUG_OUT("Received query for %s with timeout %d\n",  obj_desc_sprint(&in_odsc), timeout);
     
     obj_descriptor odsc, *odsc_tab;
     ABT_mutex_lock(server->sspace_mutex);
@@ -1107,6 +1122,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
     obj_descriptor *podsc[ssd->ent_self->odsc_num];
     int num_odsc;
     num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc, timeout);
+    DEBUG_OUT("found %d DHT entries.\n", num_odsc);
     if (!num_odsc) {
         //need to figure out how to send that number of odscs is null
         out.odsc_list.size = 0;
@@ -1120,6 +1136,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
         for (int j = 0; j < num_odsc; j++) {
             obj_descriptor odsc;
             odsc = *podsc[j];
+            DEBUG_OUT("including %s\n", obj_desc_sprint(&odsc));
             /* Preserve storage type at the destination. */
             odsc.st = in_odsc.st;
             bbox_intersect(&in_odsc.bb, &odsc.bb, &odsc.bb);
@@ -1150,7 +1167,6 @@ static void obj_update_rpc(hg_handle_t handle)
     obj_update_t type;
     int err;
 
-    fprintf(stderr, "server in %s\n", __func__);
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);

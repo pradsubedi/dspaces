@@ -133,7 +133,6 @@ struct dht_entry {
 
         int     odsc_size, odsc_num;
         struct list_head  odsc_hash[1];
- 
 };
 
 struct dht {

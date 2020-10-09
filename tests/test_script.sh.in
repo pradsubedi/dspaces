@@ -40,5 +40,12 @@ elif [ $1 -eq 4 ]; then
         sleep 2
         mpirun -n 2 test_reader sockets 1 2 64 2 8
         wait
+elif [ $1 -eq 5 ]; then
+        rm -rf servids.0
+        mpirun -n 2 dspaces_server sockets &
+        sleep 3
+        mpirun -n 2 test_reader sockets 1 2 64 5 8 &
+        sleep 5
+        mpirun -n 2 test_writer sockets 1 2 64 5 8
+        wait
 fi
-

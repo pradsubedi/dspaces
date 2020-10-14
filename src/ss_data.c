@@ -1168,8 +1168,8 @@ long ssh_hash_elem_count_v1(struct sspace *ss, const struct bbox *bb)
     for(i = 0; i < n; i++) {
         if(i_self->lb <= i_tab[i].ub && i_self->ub >= i_tab[i].lb) {
             overlap = (i_self->ub - i_tab[i].lb) + 1;
-            if(i_tab[i].lb > i_self->lb) {
-                overlap -= i_tab[i].lb - i_self->lb;
+            if(i_tab[i].lb < i_self->lb) {
+                overlap -= i_self->lb - i_tab[i].lb;
             }
             if(i_self->ub > i_tab[i].ub) {
                 overlap -= i_self->ub - i_tab[i].ub;
@@ -1344,24 +1344,35 @@ static obj_descriptor *dht_find_exact(const struct dht_entry *de, const obj_desc
  *  subscription should fail and that failure should be propagated.
  *
  */
-int dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc, 
-                    obj_descriptor **odsc_tab, long remaining, int timeout)
+void dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc, 
+                    obj_descriptor ***odsc_tab, int *tab_entries, long remaining, int timeout)
 {
     struct dht_sub_list_entry sub;
+    obj_descriptor **odsc_tab_pos;
+    struct obj_desc_ptr_list *odscl, *tmp;
     int n = q_odsc->version % de->odsc_size;
 
     sub.odsc = q_odsc;
-    sub.odsc_tab = odsc_tab;
     sub.remaining = remaining;
     sub.pub_count = 0;
-   
+    INIT_LIST_HEAD(&sub.recv_odsc);   
+ 
     list_add(&sub.entry, &de->dht_subs[n]);
  
     do {
         ABT_cond_wait(de->hash_cond[n], de->hash_mutex[n]);
     }while(sub.remaining > 0);
 
-    return(sub.pub_count);
+    *odsc_tab = realloc(*odsc_tab,sizeof(**odsc_tab) * (*tab_entries + sub.pub_count));
+    odsc_tab_pos = &(*odsc_tab)[*tab_entries];
+    list_for_each_entry_safe(odscl, tmp, &sub.recv_odsc, struct obj_desc_ptr_list, odsc_entry) {
+        *odsc_tab_pos = odscl->odsc;
+        odsc_tab_pos++;
+        list_del(&odscl->odsc_entry);
+        free(odscl);
+    }
+    *tab_entries += sub.pub_count;
+
 }
 
 int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
@@ -1382,6 +1393,7 @@ int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
 int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
 {
     struct obj_desc_list *odscl;
+    struct obj_desc_ptr_list *sub_odscl;
     struct dht_sub_list_entry *sub, *tmp;
     struct bbox isect;
     int sub_complete = 0;
@@ -1412,11 +1424,13 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
     ABT_mutex_lock(de->hash_mutex[n]);
     list_for_each_entry_safe(sub, tmp, &de->dht_subs[n], struct dht_sub_list_entry, entry) {
         if(bbox_does_intersect(&odsc->bb, &sub->odsc->bb)) {
+            sub_odscl = malloc(sizeof(*sub_odscl));
+            sub_odscl->odsc = &odscl->odsc;           
+            list_add(&sub_odscl->odsc_entry, &sub->recv_odsc);
+            sub->pub_count++;
+
             bbox_intersect(&odsc->bb, &sub->odsc->bb, &isect);
             sub->remaining -= bbox_volume(&isect);
-            *sub->odsc_tab = &odscl->odsc;
-            sub->odsc_tab++;
-            sub->pub_count++;
             if(sub->remaining == 0) {
                 sub_complete = 1;
                 list_del(&sub->entry);
@@ -1437,7 +1451,7 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
   number and references .
 */
 int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc, 
-                obj_descriptor *odsc_tab[], int timeout)
+                obj_descriptor **odsc_tab[], int timeout)
 {
     int n, num_odsc = 0;
     long num_elem;
@@ -1452,7 +1466,7 @@ int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc,
     }
     list_for_each_entry(odscl, &de->odsc_hash[n], struct obj_desc_list, odsc_entry) {
         if (obj_desc_equals_intersect(&odscl->odsc, q_odsc)) {
-            odsc_tab[num_odsc++] = &odscl->odsc;
+            (*odsc_tab)[num_odsc++] = &odscl->odsc;
             if(sub) {
                 bbox_intersect(&q_odsc->bb, &odscl->odsc.bb, &isect);
                 num_elem -= bbox_volume(&isect);
@@ -1461,7 +1475,7 @@ int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc,
     }
     if(sub) {
         if(num_elem > 0) {
-            num_odsc += dht_local_subscribe(de, q_odsc, &odsc_tab[num_odsc], num_elem, timeout);
+            dht_local_subscribe(de, q_odsc, odsc_tab, &num_odsc, num_elem, timeout);
         }
         ABT_mutex_unlock(de->hash_mutex[n]);
     }

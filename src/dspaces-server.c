@@ -962,7 +962,7 @@ static void query_rpc(hg_handle_t handle)
 
     if(self_id_num > -1) {
         podsc = malloc(sizeof(*podsc) * ssd->ent_self->odsc_num);
-        odsc_nums[self_id_num] = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc, timeout);
+        odsc_nums[self_id_num] = dht_find_entry_all(ssd->ent_self, &in_odsc, &podsc, timeout);
         DEBUG_OUT("%d odscs found in %d\n", odsc_nums[self_id_num], server->dsg->rank);
         total_odscs += odsc_nums[self_id_num];
         if(odsc_nums[self_id_num]) {
@@ -1098,6 +1098,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
     odsc_gdim_t in;
     int timeout;
     odsc_list_t out;
+    obj_descriptor **podsc;
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info* info = margo_get_info(handle);
@@ -1119,9 +1120,9 @@ static void odsc_internal_rpc(hg_handle_t handle)
     ABT_mutex_lock(server->sspace_mutex);
     struct sspace* ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
     ABT_mutex_unlock(server->sspace_mutex);
-    obj_descriptor *podsc[ssd->ent_self->odsc_num];
+    podsc = malloc(sizeof(*podsc) * ssd->ent_self->odsc_num);
     int num_odsc;
-    num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, podsc, timeout);
+    num_odsc = dht_find_entry_all(ssd->ent_self, &in_odsc, &podsc, timeout);
     DEBUG_OUT("found %d DHT entries.\n", num_odsc);
     if (!num_odsc) {
         //need to figure out how to send that number of odscs is null
@@ -1153,6 +1154,8 @@ static void odsc_internal_rpc(hg_handle_t handle)
     {
         DEBUG_OUT("send odsc: %s\n", obj_desc_sprint(&odsc_tab[i]));
     }
+
+    free(podsc);
 }
 DEFINE_MARGO_RPC_HANDLER(odsc_internal_rpc)
 

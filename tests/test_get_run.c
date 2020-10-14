@@ -67,7 +67,7 @@ int check_data(const char *var_name, double *buf, int num_elem, int rank, int ts
                 return -EINVAL;
         }
         max = min = sum = buf[0];
-        for (i = 1; i < num_elem; i++) {
+        for (i = 0; i < num_elem; i++) {
                 if (max < buf[i])
                         max = buf[i];
                 if (min > buf [i])
@@ -173,7 +173,7 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 	dspaces_client_t ndcl = dspaces_CLIENT_NULL;
 
 	hg_return_t hret = HG_SUCCESS;
-    int ret = 0;
+    int err, ret = 0;
 
 	int i;
 	for(i = 0; i < ndims; i++){
@@ -190,20 +190,16 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 	MPI_Comm_rank(gcomm_, &rank_);
     MPI_Comm_size(gcomm_, &nproc_);
 
-
     ret = client_init(listen_addr, rank_, &ndcl);
-
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
-
 	
 	unsigned int ts;
 	for(ts = 1; ts <= timesteps_; ts++){
-		ret = couple_read_nd(ndcl, ts, num_vars, ndims);
-		if(ret!=0){
+		err = couple_read_nd(ndcl, ts, num_vars, ndims);
+		if(err != 0){
 			ret = -1;
-			goto error;
 		}
 
 	}
@@ -224,7 +220,7 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 
 	fprintf(stdout, "TIMING_PERF Close_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
 
-    return 0;
+    return ret;
 
  error:
     client_finalize(ndcl);

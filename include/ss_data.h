@@ -89,6 +89,11 @@ struct obj_desc_list {
 	obj_descriptor	odsc;
 };
 
+struct obj_desc_ptr_list {
+    struct list_head odsc_entry;
+    obj_descriptor *odsc;
+};
+
 typedef struct{
         size_t size;
         char *raw_odsc;
@@ -105,9 +110,9 @@ typedef struct{
 
 struct dht_sub_list_entry {
     obj_descriptor *odsc; //subbed object
-    obj_descriptor **odsc_tab;
     long remaining;
     int pub_count;
+    struct list_head recv_odsc;
     struct list_head entry;
 };
 
@@ -276,7 +281,7 @@ int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc);
 int dht_add_entry(struct dht_entry *, obj_descriptor *);
 obj_descriptor * dht_find_entry(struct dht_entry *, obj_descriptor *);
 int dht_find_entry_all(struct dht_entry *, obj_descriptor *, 
-                       obj_descriptor *[], int);
+                       obj_descriptor **[], int);
 int dht_find_versions(struct dht_entry *, obj_descriptor *, int []);
 //
 

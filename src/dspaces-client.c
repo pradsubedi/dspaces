@@ -3,6 +3,7 @@
  *
  * See COPYRIGHT in top-level directory.
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,16 +141,26 @@ static int build_address(dspaces_client_t client){
     char *tok;
     void *addr_str_buf = NULL;
     int addr_str_buf_len = 0, num_addrs = 0;
+    int wait_time, time = 0;
     int fd;
 
     char* file_name = "servids.0";
-    fd = open(file_name, O_RDONLY);
-    if (fd == -1)
-    {
-        fprintf(stderr, "Error: Unable to open config file %s for server_address list\n",
-            file_name);
-        goto fini;
-    }
+    
+    do {
+        fd = open(file_name, O_RDONLY);
+        if (fd == -1)
+        {
+            if(errno == ENOENT) {
+                DEBUG_OUT("unable to find config file %s after %d seconds, will try again...\n", file_name, time);
+            } else {
+                fprintf(stderr, "ERROR: could not open config file %s.\n", file_name);
+                goto fini;
+            }
+            wait_time = (rand() % 3) + 1;
+            time += wait_time;
+            sleep(wait_time);
+        }
+    }while(fd == -1);
 
     /* get file size and allocate a buffer to store it */
     ret = fstat(fd, &st);
@@ -620,7 +631,7 @@ int dspaces_get (dspaces_client_t client,
     margo_free_output(handle, &out);
     margo_destroy(handle);
     
-    DEBUG_OUT("Finished query\n");
+    DEBUG_OUT("Finished query - need to fetch %d objects\n", num_odscs);
     for (int i = 0; i < num_odscs; ++i)
     {
         DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i]));

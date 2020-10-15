@@ -17,6 +17,8 @@
 #include <mercury_macros.h>
 #include <margo.h>
 
+#include <abt.h>
+
 #define MAX_VERSIONS 10
 
 typedef struct {
@@ -87,6 +89,11 @@ struct obj_desc_list {
 	obj_descriptor	odsc;
 };
 
+struct obj_desc_ptr_list {
+    struct list_head odsc_entry;
+    obj_descriptor *odsc;
+};
+
 typedef struct{
         size_t size;
         char *raw_odsc;
@@ -100,6 +107,14 @@ typedef struct{
         char *raw_gdim;
 
 } odsc_hdr_with_gdim;
+
+struct dht_sub_list_entry {
+    obj_descriptor *odsc; //subbed object
+    long remaining;
+    int pub_count;
+    struct list_head recv_odsc;
+    struct list_head entry;
+};
 
 struct dht_entry {
         /* Global info. */
@@ -116,6 +131,10 @@ struct dht_entry {
         int num_bbox;
         int size_bb_tab;
         struct bbox             *bb_tab;
+
+        ABT_mutex *hash_mutex;
+        ABT_cond *hash_cond;
+        struct list_head *dht_subs;
 
         int     odsc_size, odsc_num;
         struct list_head  odsc_hash[1];
@@ -239,7 +258,7 @@ MERCURY_GEN_PROC(bulk_in_t,
         ((odsc_hdr)(odsc))\
         ((hg_bulk_t)(handle)))
 MERCURY_GEN_PROC(bulk_out_t, ((int32_t)(ret)))
-MERCURY_GEN_PROC(odsc_gdim_t, ((odsc_hdr_with_gdim)(odsc_gdim)))
+MERCURY_GEN_PROC(odsc_gdim_t, ((odsc_hdr_with_gdim)(odsc_gdim))((int32_t)(param)))
 MERCURY_GEN_PROC(odsc_list_t, ((odsc_hdr)(odsc_list)))
 MERCURY_GEN_PROC(ss_information, ((odsc_hdr)(ss_buf)))
 
@@ -252,15 +271,17 @@ void ssd_free(struct sspace *);
 //
 
 int ssd_copy(struct obj_data *, struct obj_data *);
-
+//
+long ssh_hash_elem_count(struct sspace *ss, const struct bbox *bb);
 //
 int ssd_filter(struct obj_data *, obj_descriptor *, double *);
 int ssd_hash(struct sspace *, const struct bbox *, struct dht_entry *[]);
 
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc);
 int dht_add_entry(struct dht_entry *, obj_descriptor *);
 obj_descriptor * dht_find_entry(struct dht_entry *, obj_descriptor *);
 int dht_find_entry_all(struct dht_entry *, obj_descriptor *, 
-                       obj_descriptor *[]);
+                       obj_descriptor **[], int);
 int dht_find_versions(struct dht_entry *, obj_descriptor *, int []);
 //
 
@@ -283,7 +304,7 @@ void obj_data_free(struct obj_data *od);
 uint64_t obj_data_size(obj_descriptor *);
 
 int obj_desc_equals(obj_descriptor *, obj_descriptor *);
-int obj_desc_equals_no_owner(obj_descriptor *, obj_descriptor *);
+int obj_desc_equals_no_owner(const obj_descriptor *, const obj_descriptor *);
 
 int obj_desc_equals_intersect(obj_descriptor *odsc1,
                 obj_descriptor *odsc2);

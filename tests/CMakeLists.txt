@@ -7,6 +7,9 @@ target_link_libraries(test_reader dspaces)
 add_executable(test_writer test_writer.c test_put_run.c timer.c)
 target_link_libraries(test_writer dspaces)
 
+add_executable(terminator terminator.c)
+target_link_libraries(terminator dspaces)
+
 configure_file(
   ${PROJECT_SOURCE_DIR}/tests/test_script.sh.in
   ${PROJECT_BINARY_DIR}/tests/test_script.sh
@@ -17,10 +20,13 @@ find_program (BASH_PROGRAM bash)
 
 if (BASH_PROGRAM)
   add_test (Test_write ${BASH_PROGRAM} test_script.sh 1)
+  set_tests_properties(Test_write PROPERTIES TIMEOUT 30) 
   add_test (Test_read ${BASH_PROGRAM} test_script.sh 2)
+  set_tests_properties(Test_read PROPERTIES TIMEOUT 30) 
   add_test (Test_read_data_subset ${BASH_PROGRAM} test_script.sh 3)
+  set_tests_properties(Test_read_data_subset PROPERTIES TIMEOUT 30) 
   add_test (Test_read_ts_subset ${BASH_PROGRAM} test_script.sh 4)
-
-  set_property(TEST PROPERTY ENVIRONMENT
-"PATH=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}:$ENV{PATH}")
+  set_tests_properties(Test_read_ts_subset PROPERTIES TIMEOUT 30) 
+  add_test (Test_read_early ${BASH_PROGRAM} test_script.sh 5)
+  set_tests_properties(Test_read_early PROPERTIES TIMEOUT 30)
 endif (BASH_PROGRAM)

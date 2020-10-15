@@ -34,6 +34,7 @@
 
 #include "ss_data.h"
 
+#include <abt.h>
 
 struct ds_gspace {
 

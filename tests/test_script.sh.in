@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 export PATH="@CMAKE_RUNTIME_OUTPUT_DIRECTORY@:${PATH}"
 
 ## Create dataspaces configuration file
@@ -14,7 +14,8 @@ if [ $1 -eq 1 ]; then
         mpirun -n 2 dspaces_server sockets &
         sleep 5
         mpirun -n 1 test_writer sockets 1 1 64 5 8
-        pkill dspaces_server
+        mpirun -n 1 terminator sockets
+        wait
 elif [ $1 -eq 2 ]; then
         rm -rf servids.0
         mpirun -n 2 dspaces_server sockets &
@@ -22,8 +23,7 @@ elif [ $1 -eq 2 ]; then
         mpirun -n 2 test_writer sockets 1 2 64 5 8 &
         sleep 2
         mpirun -n 2 test_reader sockets 1 2 64 5 8
-        pkill dspaces_server
-        pkill test_writer
+        wait
 elif [ $1 -eq 3 ]; then
         rm -rf servids.0
         mpirun -n 2 dspaces_server sockets &
@@ -31,8 +31,7 @@ elif [ $1 -eq 3 ]; then
         mpirun -n 2 test_writer sockets 1 2 64 5 8 &
         sleep 2
         mpirun -n 2 test_reader sockets 1 2 32 5 8
-        pkill dspaces_server
-        pkill test_writer
+        wait
 elif [ $1 -eq 4 ]; then
         rm -rf servids.0
         mpirun -n 2 dspaces_server sockets &
@@ -40,8 +39,13 @@ elif [ $1 -eq 4 ]; then
         mpirun -n 2 test_writer sockets 1 2 64 5 8 &
         sleep 2
         mpirun -n 2 test_reader sockets 1 2 64 2 8
-        pkill dspaces_server
-        pkill test_writer
+        wait
+elif [ $1 -eq 5 ]; then
+        rm -rf servids.0
+        mpirun -n 2 dspaces_server sockets &
+        sleep 3
+        mpirun -n 2 test_reader sockets 1 2 64 5 8 &
+        sleep 5
+        mpirun -n 2 test_writer sockets 1 2 64 5 8
+        wait
 fi
-
-kill $!

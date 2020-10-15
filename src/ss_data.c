@@ -37,6 +37,8 @@
 #include "ss_data.h"
 #include "queue.h"
 
+#include<abt.h>
+
 /*
   A view in  the matrix allows to extract any subset  of values from a
   matrix.
@@ -212,9 +214,16 @@ static struct dht_entry * dht_entry_alloc(struct sspace *ssd, int size_hash)
 
     de->ss = ssd;
     de->odsc_size = size_hash;
+    de->hash_cond = malloc(sizeof(*(de->hash_cond)) * size_hash);
+    de->hash_mutex = malloc(sizeof(*(de->hash_mutex)) * size_hash);
+    de->dht_subs = malloc(sizeof(*(de->dht_subs)) * size_hash);
 
-    for (i = 0; i < size_hash; i++)
+    for (i = 0; i < size_hash; i++) {
         INIT_LIST_HEAD(&de->odsc_hash[i]);
+        ABT_cond_create(&de->hash_cond[i]);
+        ABT_mutex_create(&de->hash_mutex[i]);
+        INIT_LIST_HEAD(&de->dht_subs[i]);
+    }
 
     de->num_bbox = 0;
     de->size_bb_tab = 0;
@@ -528,9 +537,6 @@ struct sspace *ssd_alloc_v2(const struct bbox *bb_domain, int num_nodes, int max
             ssd->dht->ent_tab[i]->size_bb_tab = n;
             ssd->dht->ent_tab[i]->bb_tab = malloc(sizeof(struct bbox)*n);
         }
-        //printf("%s(): ssd->total_num_bbox= %d ssd->dht->num_entries= %d"
-        //    " max_num_bbox_per_dht_entry= %d\n",
-        //    __func__, ssd->total_num_bbox, ssd->dht->num_entries, n);
 
         // simple round-robing mapping of decomposed bbox to dht entries
         i = 0;
@@ -541,18 +547,6 @@ struct sspace *ssd_alloc_v2(const struct bbox *bb_domain, int num_nodes, int max
             ssd->dht->ent_tab[j]->bb_tab[k] = *bb;
             free(bb);
         }
-
-/*
-        for (i = 0; i < ssd->dht->num_entries; i++) {
-            printf("dht entry %d size_bb_tab= %d num_bbox= %d\n", i,
-                ssd->dht->ent_tab[i]->size_bb_tab,
-                ssd->dht->ent_tab[i]->num_bbox);
-            for (j = 0; j < ssd->dht->ent_tab[i]->num_bbox; j++) {
-                bbox_print(&ssd->dht->ent_tab[i]->bb_tab[j]);
-            }        
-            printf("\n");
-        }
-*/
 
         ssd->hash_version = ssd_hash_version_v2;        
         return ssd;
@@ -1043,12 +1037,10 @@ uint64_t obj_data_size(obj_descriptor *obj_desc)
 }
 
 
-int obj_desc_equals_no_owner(obj_descriptor *odsc1,
-                 obj_descriptor *odsc2)
+int obj_desc_equals_no_owner(const obj_descriptor *odsc1,
+                 const obj_descriptor *odsc2)
 {
-        /* Note: object distribution should not change with
-           version. */
-        if (// odsc1->version == odsc2->version && 
+        if (odsc1->version == odsc2->version && 
             strcmp(odsc1->name, odsc2->name) == 0 &&
             bbox_equals(&odsc1->bb, &odsc2->bb))
                 return 1;
@@ -1160,6 +1152,82 @@ void ssd_free(struct sspace *ss)
     }
 }
 
+long ssh_hash_elem_count_v1(struct sspace *ss, const struct bbox *bb)
+{
+    struct intv *i_tab, *i_self;
+    long overlap, num_elem;
+    int i, n;
+
+    //TODO: cache results
+
+    bbox_to_intv2(bb, ss->max_dim, ss->bpd, &i_tab, &n);
+
+    i_self = &ss->ent_self->i_virt;
+
+    num_elem = 0;
+    for(i = 0; i < n; i++) {
+        if(i_self->lb <= i_tab[i].ub && i_self->ub >= i_tab[i].lb) {
+            overlap = (i_self->ub - i_tab[i].lb) + 1;
+            if(i_tab[i].lb < i_self->lb) {
+                overlap -= i_self->lb - i_tab[i].lb;
+            }
+            if(i_self->ub > i_tab[i].ub) {
+                overlap -= i_self->ub - i_tab[i].ub;
+            }
+            num_elem += overlap;
+        }
+    }
+
+    return(num_elem);
+}
+
+long ssh_hash_elem_count_v2(struct sspace *ss, const struct bbox *bb)
+{
+    long num_elem;
+    struct bbox *ent_bb;
+    struct bbox isect;
+    int i;
+
+    //TODO: cache results
+
+    num_elem = 0;
+    for(i = 0; i < ss->ent_self->num_bbox; i++) {
+        ent_bb = &ss->ent_self->bb_tab[i];
+        if(bbox_does_intersect(bb, ent_bb)) {
+            bbox_intersect(bb, ent_bb, &isect);
+            num_elem += bbox_volume(&isect);
+        }
+    }
+
+    return(num_elem);
+}
+
+
+/*
+ Get the number of elements of a bounding box 'bb' that hash to the
+ local dht
+ */
+long ssh_hash_elem_count(struct sspace *ss, const struct bbox *bb)
+{
+    long ret;
+
+    switch(ss->hash_version) {
+    case ssd_hash_version_v1:
+        ret = ssh_hash_elem_count_v1(ss, bb);
+        break;
+    case ssd_hash_version_v2:
+        ret = ssh_hash_elem_count_v2(ss, bb);
+        break;
+    default:
+        fprintf(stderr, "%s(): ERROR unknown shared space hash version %u\n",
+            __func__, ss->hash_version);
+        ret = 0;
+        break;
+    }
+
+    return(ret);
+}
+
 /*
   Hash a bounding box 'bb' to the hash entries in dht; fill in the
   entries in the de_tab and return the number of entries.
@@ -1245,20 +1313,104 @@ dht_find_match(const struct dht_entry *de, const obj_descriptor *odsc)
     return 0;
 }
 
+static obj_descriptor *dht_find_exact(const struct dht_entry *de, const obj_descriptor *odsc)
+{
+    struct obj_desc_list *odscl;
+    int n;
+
+    n = odsc->version % de->odsc_size;
+    list_for_each_entry(odscl, &de->odsc_hash[n], struct obj_desc_list, odsc_entry) {
+       if(obj_desc_equals_no_owner(odsc, &odscl->odsc)) {
+            return(&odscl->odsc);
+        } 
+    }
+
+    return(NULL);
+}
+
 #define array_resize(a, n) a = realloc(a, sizeof(*a) * (n))
+
+/*`
+ * subscribe to a certain number of elements, remaining, of an object descriptor
+ *  q_odsc. When dht updates are added, they will be checked against subscriptions
+ * created by this function. Each incoming update that overlaps with q_odsc will
+ * decrement sub.remaining by the size of the overlap and increment pub_count by
+ * one. The general idea is that once enough elements that overlap with the query
+ * have been counted, the query must be fully satisfiable.
+ *
+ * Updates and signals are coming from dht_add_entry
+ *
+ * TODO: if we ever overwrite an object that is needed to satisfy q_odsc, the
+ *  subscription should fail and that failure should be propagated.
+ *
+ */
+void dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc, 
+                    obj_descriptor ***odsc_tab, int *tab_entries, long remaining, int timeout)
+{
+    struct dht_sub_list_entry sub;
+    obj_descriptor **odsc_tab_pos;
+    struct obj_desc_ptr_list *odscl, *tmp;
+    int n = q_odsc->version % de->odsc_size;
+
+    sub.odsc = q_odsc;
+    sub.remaining = remaining;
+    sub.pub_count = 0;
+    INIT_LIST_HEAD(&sub.recv_odsc);   
+ 
+    list_add(&sub.entry, &de->dht_subs[n]);
+ 
+    do {
+        ABT_cond_wait(de->hash_cond[n], de->hash_mutex[n]);
+    }while(sub.remaining > 0);
+
+    *odsc_tab = realloc(*odsc_tab,sizeof(**odsc_tab) * (*tab_entries + sub.pub_count));
+    odsc_tab_pos = &(*odsc_tab)[*tab_entries];
+    list_for_each_entry_safe(odscl, tmp, &sub.recv_odsc, struct obj_desc_ptr_list, odsc_entry) {
+        *odsc_tab_pos = odscl->odsc;
+        odsc_tab_pos++;
+        list_del(&odscl->odsc_entry);
+        free(odscl);
+    }
+    *tab_entries += sub.pub_count;
+
+}
+
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
+{
+    obj_descriptor *old_odsc;
+
+    old_odsc = dht_find_exact(de, odsc);
+    if(!old_odsc) {
+        fprintf(stderr, "ERROR: (%s): no matching object found when doing update. Object being updated is %s\n", __func__, obj_desc_sprint(odsc));
+        return(-ENOENT);
+    }
+    strcpy(old_odsc->owner, odsc->owner);    
+
+    return 0;
+
+}
 
 int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
 {
     struct obj_desc_list *odscl;
-        int n, err = -ENOMEM;
+    struct obj_desc_ptr_list *sub_odscl;
+    struct dht_sub_list_entry *sub, *tmp;
+    struct bbox isect;
+    int sub_complete = 0;
+    int n, err = -ENOMEM;
 
-        odscl = dht_find_match(de, odsc);
-        if (odscl) {
-                /* There  is allready  a descriptor  with  a different
-           version in the DHT, so I will overwrite it. */
-                memcpy(&odscl->odsc, odsc, sizeof(*odsc));
-                return 0;
+    odscl = dht_find_match(de, odsc);
+    if (odscl) {
+           /* There  is allready  a descriptor  with  a different
+              version in the DHT, so I will overwrite it. */
+        if(odscl->odsc.version == odsc->version) {
+            fprintf(stderr, "WARNING: the server has detected an overlapping put (same version and some common elements with a previous put. DataSpaces storage is intended to be immutable, and the behavior of updates is undefined. Proceed at your own risk...\n"); 
+            fprintf(stderr, " New put is: \n%s\n", obj_desc_sprint(odsc));
+            fprintf(stderr, " But found existing: \n%s\n", obj_desc_sprint(&odscl->odsc));
         }
+        memcpy(&odscl->odsc, odsc, sizeof(*odsc));
+        return 0;
+    }
 
     n = odsc->version % de->odsc_size;
     odscl = malloc(sizeof(*odscl));
@@ -1269,7 +1421,29 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
     list_add(&odscl->odsc_entry, &de->odsc_hash[n]);
     de->odsc_num++;
 
-        return 0;
+    ABT_mutex_lock(de->hash_mutex[n]);
+    list_for_each_entry_safe(sub, tmp, &de->dht_subs[n], struct dht_sub_list_entry, entry) {
+        if(bbox_does_intersect(&odsc->bb, &sub->odsc->bb)) {
+            sub_odscl = malloc(sizeof(*sub_odscl));
+            sub_odscl->odsc = &odscl->odsc;           
+            list_add(&sub_odscl->odsc_entry, &sub->recv_odsc);
+            sub->pub_count++;
+
+            bbox_intersect(&odsc->bb, &sub->odsc->bb, &isect);
+            sub->remaining -= bbox_volume(&isect);
+            if(sub->remaining == 0) {
+                sub_complete = 1;
+                list_del(&sub->entry);
+            }
+        }
+    }
+    if(sub_complete) {
+        ABT_cond_broadcast(de->hash_cond[n]);
+    }
+
+    ABT_mutex_unlock(de->hash_mutex[n]);
+
+    return 0;
 }
 /*
   Object descriptor 'q_odsc' can intersect multiple object descriptors
@@ -1277,19 +1451,36 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
   number and references .
 */
 int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc, 
-                obj_descriptor *odsc_tab[])
+                obj_descriptor **odsc_tab[], int timeout)
 {
-        int n, num_odsc = 0;
+    int n, num_odsc = 0;
+    long num_elem;
     struct obj_desc_list *odscl;
+    struct bbox isect;
+    int sub = timeout != 0 && de == de->ss->ent_self;
 
     n = q_odsc->version % de->odsc_size;
+    if(sub) {
+        num_elem = ssh_hash_elem_count(de->ss, &q_odsc->bb);
+        ABT_mutex_lock(de->hash_mutex[n]);
+    }
     list_for_each_entry(odscl, &de->odsc_hash[n], struct obj_desc_list, odsc_entry) {
-        if (obj_desc_equals_intersect(&odscl->odsc, q_odsc))
-            odsc_tab[num_odsc++] = &odscl->odsc;
-        fprintf(stderr, "dht_entries %s\n", obj_desc_sprint(&odscl->odsc));
+        if (obj_desc_equals_intersect(&odscl->odsc, q_odsc)) {
+            (*odsc_tab)[num_odsc++] = &odscl->odsc;
+            if(sub) {
+                bbox_intersect(&q_odsc->bb, &odscl->odsc.bb, &isect);
+                num_elem -= bbox_volume(&isect);
+            }
+        }
+    }
+    if(sub) {
+        if(num_elem > 0) {
+            dht_local_subscribe(de, q_odsc, odsc_tab, &num_odsc, num_elem, timeout);
+        }
+        ABT_mutex_unlock(de->hash_mutex[n]);
     }
 
-        return num_odsc;
+    return num_odsc;
 }
 
 /*

@@ -23,6 +23,7 @@ typedef struct dspaces_client* dspaces_client_t;
  * @brief Creates a dspaces client.
  * @param[in] rank: rank of this process relative in the application
  * @param[out] client dspaces client
+ * @param[in] debug: enable debugging
  *
  * @return dspaces_SUCCESS or error code defined in dspaces-common.h
  */
@@ -144,7 +145,8 @@ int dspaces_put_local (dspaces_client_t client,
  *                  bounding box.
  * @param[in] ub:       coordinates for the upper corner of the local
  *                  bounding box. 
- * @param[in] data:     Pointer to user data buffer. 
+ * @param[in] data:     Pointer to user data buffer.
+ * @param[in] timeout:  Timeout value: -1 is never, 0 is immediate.
  *
  * @return  0 indicates success.
  */
@@ -152,7 +154,17 @@ int dspaces_get (dspaces_client_t client,
 		const char *var_name,
         unsigned int ver, int size,
         int ndim, uint64_t *lb, uint64_t *ub, 
-        void *data); 
+        void *data, int timeout);
+
+/**
+ * @brief send signal to kill server group.
+ *
+ * Only one client process needs to send the kill process.
+ * The kill signal is propagated between server processes. 
+ *
+ * @param[in] client dspaces client
+ */
+void dspaces_kill(dspaces_client_t client);
 
 #if defined(__cplusplus)
 }

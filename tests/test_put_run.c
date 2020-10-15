@@ -106,10 +106,10 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
-		if(rank_%2 == 0)
+		//if(rank_%2 == 0)
 			err = dspaces_put(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
-		else
-			err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
+		//else
+		//	err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
 		if(err!=0){
 			fprintf(stderr, "dspaces_put returned error %d", err);
 			return err;

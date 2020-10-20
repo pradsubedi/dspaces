@@ -45,6 +45,8 @@ set (BUILD_SHARED_LIBS "OFF" CACHE BOOL "Build a shared library")
 include (xpkg-import)
 xpkg_import_module (margo REQUIRED margo)
 
+find_package(MPI COMPONENTS REQUIRED)
+
 add_subdirectory (src)
 if(${ENABLE_TESTS})
   enable_testing()

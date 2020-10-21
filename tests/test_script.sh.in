@@ -12,40 +12,32 @@ lock_type = 2
 if [ $1 -eq 1 ]; then
         rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer sockets 1 1 64 5 8
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator sockets
         wait
 elif [ $1 -eq 2 ]; then
         rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8 &
-        sleep 2
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 64 5 8
         wait
 elif [ $1 -eq 3 ]; then
         rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8 &
-        sleep 2
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 32 5 8
         wait
 elif [ $1 -eq 4 ]; then
         rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8 &
-        sleep 2
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 64 2 8
         wait
 elif [ $1 -eq 5 ]; then
         rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 3
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 64 5 8 &
-        sleep 5
+        sleep 7
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8
         wait
 fi

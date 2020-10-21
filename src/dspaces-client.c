@@ -13,7 +13,6 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <inttypes.h>
-#include <pthread.h>
 #include "ss_data.h"
 #include "dspaces-client.h"
 #include "gspace.h"
@@ -27,9 +26,6 @@
     }while(0);
 
 static enum storage_type st = column_major;
-pthread_mutex_t ls_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t drain_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t drain_cond = PTHREAD_COND_INITIALIZER;
 
 struct dspaces_client {
     margo_instance_id mid;
@@ -47,6 +43,13 @@ struct dspaces_client {
     int local_put_count; // used during finalize
     int f_debug;
     int f_final;
+    int listener_init;
+
+    ABT_mutex ls_mutex;
+    ABT_mutex drain_mutex;
+    ABT_cond drain_cond;
+
+    ABT_xstream listener_xs;
 };
 
 DECLARE_MARGO_RPC_HANDLER(get_rpc);
@@ -238,8 +241,13 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
     if(!(client->dcg))
         return dspaces_ERR_ALLOCATION;
 
-    client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
+    client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 0, 0);
     assert(client->mid);
+
+    ABT_mutex_create(&client->ls_mutex);
+    ABT_mutex_create(&client->drain_mutex);
+
+    ABT_cond_create(&client->drain_cond);
 
     /* check if RPCs have already been registered */
     hg_bool_t flag;
@@ -295,17 +303,22 @@ int client_finalize(dspaces_client_t client)
     DEBUG_OUT("client rank %d in %s\n", client->rank, __func__);
 
     do { // watch out for spurious wake
-        pthread_mutex_lock(&drain_mutex);
+        ABT_mutex_lock(client->drain_mutex);
         client->f_final = 1;
 
         if(client->local_put_count > 0) {
             DEBUG_OUT("waiting for pending drainage. %d object remain.\n", client->local_put_count);
-            pthread_cond_wait(&drain_cond, &drain_mutex);
+            ABT_cond_wait(client->drain_cond, client->drain_mutex);
         }
-        pthread_mutex_unlock(&drain_mutex);
+        ABT_mutex_unlock(client->drain_mutex);
     } while(client->local_put_count > 0);
 
     DEBUG_OUT("all objects drained. Finalizing...\n");
+
+    if(client->listener_init) {
+        ABT_xstream_join(client->listener_xs);
+        ABT_xstream_free(&client->listener_xs);
+    }
 
     free_gdim_list(&client->dcg->gdim_list);
     free(client->server_address[0]);
@@ -486,10 +499,17 @@ int dspaces_put_local (dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub, 
         void *data)
 {
+    ABT_pool margo_pool;
     hg_addr_t server_addr;
     hg_handle_t handle;
     hg_return_t hret;
     int ret = dspaces_SUCCESS;
+
+    if(!client->listener_init) {
+        margo_get_handler_pool(client->mid, &margo_pool);
+        ABT_xstream_create_basic(ABT_SCHED_BASIC_WAIT, 1, &margo_pool, ABT_SCHED_CONFIG_NULL, &client->listener_xs);
+        client->listener_init = 1;
+    }
 
     client->local_put_count++;
 
@@ -525,10 +545,10 @@ int dspaces_put_local (dspaces_client_t client,
                          &od->gdim);
 
     
-    pthread_mutex_lock(&ls_mutex);  
+    ABT_mutex_lock(client->ls_mutex);
     ls_add_obj(client->dcg->ls, od);
     DEBUG_OUT("Added into local_storage\n");
-    pthread_mutex_unlock(&ls_mutex);  
+    ABT_mutex_unlock(client->ls_mutex);
 
     in.odsc_gdim.size = sizeof(odsc);
     in.odsc_gdim.raw_odsc = (char*)(&odsc);
@@ -786,17 +806,17 @@ static void drain_rpc(hg_handle_t handle)
     margo_destroy(handle);
     //delete object from local storage
     DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&from_obj->obj_desc)); 
-    pthread_mutex_lock(&ls_mutex);  
+    ABT_mutex_lock(client->ls_mutex);
     ls_try_remove_free(client->dcg->ls, from_obj);
-    pthread_mutex_unlock(&ls_mutex);
+    ABT_mutex_unlock(client->ls_mutex);
 
-    pthread_mutex_lock(&drain_mutex);
+    ABT_mutex_lock(client->drain_mutex);
     client->local_put_count--;
     if(client->local_put_count == 0 && client->f_final) {
         DEBUG_OUT("signaling all objects drained.\n");
-        pthread_cond_signal(&drain_cond);
+        ABT_cond_signal(&client->drain_cond);
     }
-    pthread_mutex_unlock(&drain_mutex);
+    ABT_mutex_unlock(client->drain_mutex);
     DEBUG_OUT("%d objects left to drain...\n", client->local_put_count);
 }
 DEFINE_MARGO_RPC_HANDLER(drain_rpc)

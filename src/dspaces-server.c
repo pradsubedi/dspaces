@@ -50,6 +50,7 @@ struct dspaces_provider{
     char **server_address;  
     int rank;
     int f_debug;
+    int f_drain;
     int f_kill;
 
     MPI_Comm comm;
@@ -730,13 +731,16 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
     int err = dsg_alloc(server, "dataspaces.conf", comm);
     assert(err == 0);    
 
-    *sv = server;
-
-    //thread to drain the data
     server->f_kill = 0;
-    ABT_xstream_create(ABT_SCHED_NULL, &server->drain_xstream);
-    ABT_xstream_get_main_pools(server->drain_xstream, 1, &server->drain_pool);
-    ABT_thread_create(server->drain_pool, drain_thread, server, ABT_THREAD_ATTR_NULL, &server->drain_t); 
+
+    if(server->f_drain) {
+        //thread to drain the data
+        ABT_xstream_create(ABT_SCHED_NULL, &server->drain_xstream);
+        ABT_xstream_get_main_pools(server->drain_xstream, 1, &server->drain_pool);
+        ABT_thread_create(server->drain_pool, drain_thread, server, ABT_THREAD_ATTR_NULL, &server->drain_t); 
+    }
+
+    *sv = server;
 
     return dspaces_SUCCESS;
 }
@@ -750,10 +754,12 @@ static int server_destroy(dspaces_provider_t server)
         fprintf(stderr, "Finishing up, waiting for asynchronous jobs to finish...\n");
     }
 
-    ABT_thread_free(&server->drain_t);
-    ABT_xstream_join(server->drain_xstream);
-    ABT_xstream_free(&server->drain_xstream);
-    DEBUG_OUT("drain thread stopped.\n");
+    if(server->f_drain) {
+        ABT_thread_free(&server->drain_t);
+        ABT_xstream_join(server->drain_xstream);
+        ABT_xstream_free(&server->drain_xstream);
+        DEBUG_OUT("drain thread stopped.\n");
+    }
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);

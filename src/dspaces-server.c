@@ -24,6 +24,8 @@
         } \
     }while(0);
 
+#define DSPACES_DEFAULT_NUM_HANDLERS 4
+
 static enum storage_type st = column_major;
 
 typedef enum obj_update_type {
@@ -645,9 +647,12 @@ static void drain_thread(void *arg)
 int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
 {
     const char *envdebug = getenv("DSPACES_DEBUG");
+    const char *envnthreads = getenv("DSPACES_NUM_HANDLERS");
+    const char *envdrain = getenv("DSPACES_DRAIN");
     dspaces_provider_t server;
     hg_bool_t flag;
     hg_id_t id;
+    int num_handlers = DSPACES_DEFAULT_NUM_HANDLERS;
     int ret; 
 
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
@@ -658,10 +663,18 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         server->f_debug = 1;
     }
 
+    if(envnthreads) {
+        num_handlers = atoi(envnthreads);
+    }
+
+    if(envdrain) {
+        server->f_drain = 1;
+    }
+
     MPI_Comm_dup(comm, &server->comm);
     MPI_Comm_rank(comm, &server->rank);
 
-    server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
+    server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
     assert(server->mid);
 
     ret = ABT_mutex_create(&server->odsc_mutex);
@@ -683,7 +696,6 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,          &flag);
         margo_registered_name(server->mid, "kill_rpc",          &server->kill_id,           &flag);
     } else {
-
         server->put_id =
             MARGO_REGISTER(server->mid, "put_rpc", bulk_gdim_t, bulk_out_t, put_rpc);
         margo_register_data(server->mid, server->put_id, (void*)server, NULL);

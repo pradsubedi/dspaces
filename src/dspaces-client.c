@@ -56,6 +56,8 @@ DECLARE_MARGO_RPC_HANDLER(get_rpc);
 static void get_rpc(hg_handle_t h);
 DECLARE_MARGO_RPC_HANDLER(drain_rpc);
 static void drain_rpc(hg_handle_t h);
+DECLARE_MARGO_RPC_HANDLER(kill_rpc);
+static void kill_rpc(hg_handle_t h);
 
 //round robin fashion
 //based on how many clients processes are connected to the server
@@ -270,17 +272,18 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
             MARGO_REGISTER(client->mid, "put_local_rpc", odsc_gdim_t, bulk_out_t, NULL);
         client->get_id =
             MARGO_REGISTER(client->mid, "get_rpc", bulk_in_t, bulk_out_t, get_rpc);
-        margo_register_data(client->mid, client->get_id, (void*)client, NULL);
+        margo_register_data(client->mid, client->get_id, (void *)client, NULL);
         client->query_id =
             MARGO_REGISTER(client->mid, "query_rpc", odsc_gdim_t, odsc_list_t, NULL);
         client->ss_id =
             MARGO_REGISTER(client->mid, "ss_rpc", void, ss_information, NULL);
         client->drain_id =
             MARGO_REGISTER(client->mid, "drain_rpc", bulk_in_t, bulk_out_t, drain_rpc);
-        margo_register_data(client->mid, client->drain_id, (void*)client, NULL);
+        margo_register_data(client->mid, client->drain_id, (void *)client, NULL);
         client->kill_id =
-            MARGO_REGISTER(client->mid, "kill_rpc", int32_t, void, NULL);
-        margo_registered_disable_response(client->mid, client->kill_id, HG_TRUE);            
+            MARGO_REGISTER(client->mid, "kill_rpc", int32_t, void, kill_rpc);
+        margo_registered_disable_response(client->mid, client->kill_id, HG_TRUE);
+        margo_register_data(client->mid, client->kill_id, (void *)client, NULL);          
     }
 
     build_address(client);
@@ -309,6 +312,7 @@ int client_finalize(dspaces_client_t client)
         if(client->local_put_count > 0) {
             DEBUG_OUT("waiting for pending drainage. %d object remain.\n", client->local_put_count);
             ABT_cond_wait(client->drain_cond, client->drain_mutex);
+            DEBUG_OUT("received drainage signal.\n");    
         }
         ABT_mutex_unlock(client->drain_mutex);
     } while(client->local_put_count > 0);
@@ -820,6 +824,23 @@ static void drain_rpc(hg_handle_t handle)
     DEBUG_OUT("%d objects left to drain...\n", client->local_put_count);
 }
 DEFINE_MARGO_RPC_HANDLER(drain_rpc)
+
+static void kill_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_client_t client = (dspaces_client_t)margo_registered_data(mid, info->id);
+
+    DEBUG_OUT("Received kill message.\n");
+
+    ABT_mutex_lock(client->drain_mutex);
+    client->local_put_count = 0;
+    ABT_cond_signal(client->drain_cond);
+    ABT_mutex_unlock(client->drain_mutex);
+
+    margo_destroy(handle);
+}
+DEFINE_MARGO_RPC_HANDLER(kill_rpc)
 
 void dspaces_kill(dspaces_client_t client)
 {

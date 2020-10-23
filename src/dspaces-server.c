@@ -35,6 +35,11 @@ typedef enum obj_update_type {
 
 int cond_num = 0;
 
+struct addr_list_entry {
+    struct list_head entry;
+    char *addr;
+};
+
 struct dspaces_provider{
     margo_instance_id mid;
     hg_id_t put_id;
@@ -620,19 +625,20 @@ static void drain_thread(void *arg)
                 break;
                 
             }
-            ABT_mutex_unlock(server->odsc_mutex);
             if(counter == 1) {
+                list_del(&odscl->odsc_entry);
+                ABT_mutex_unlock(server->odsc_mutex);
                 int ret = get_client_data(odsc, server);
                 DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
-                if(ret == dspaces_SUCCESS){
+                if(ret != dspaces_SUCCESS){
                     ABT_mutex_lock(server->odsc_mutex);
-                    //delete moved obj_descriptor from the list
-                    DEBUG_OUT("Deleting drain entry\n");
-                    list_del(&odscl->odsc_entry);
+                    DEBUG_OUT("Drain failed, returning object to queue...\n");
+                    list_add_tail(&odscl->odsc_entry, &server->dsg->obj_desc_drain_list);
                     ABT_mutex_unlock(server->odsc_mutex);
                 }
                 sleep(1);
-
+            } else {
+                ABT_mutex_unlock(server->odsc_mutex);
             }
             
         }while(counter == 1); 
@@ -745,6 +751,60 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
     return dspaces_SUCCESS;
 }
 
+static void kill_client(dspaces_provider_t server, char *client_addr)
+{
+    hg_addr_t server_addr;
+    hg_handle_t h;
+    int arg = -1;
+
+    margo_addr_lookup(server->mid, client_addr, &server_addr);
+    margo_create(server->mid, server_addr, server->kill_id, &h);
+    margo_forward(h, &arg);
+    margo_addr_free(server->mid, server_addr);
+    margo_destroy(h);
+}
+
+/*
+ * Clients with local data need to know when it's safe to finalize. Send kill rpc to any clients in the drain list.
+ */
+static void kill_local_clients(dspaces_provider_t server)
+{
+    struct obj_desc_list *odscl;
+    struct list_head client_list;
+    struct addr_list_entry *client_addr, *temp;
+    int found;
+
+    INIT_LIST_HEAD(&client_list);
+
+    DEBUG_OUT("Killing clients with local storage.\n");
+
+    ABT_mutex_lock(server->odsc_mutex);
+    list_for_each_entry(odscl, &(server->dsg->obj_desc_drain_list), struct obj_desc_list, odsc_entry) {
+        found = 0;
+        list_for_each_entry(client_addr, &client_list, struct addr_list_entry, entry) {
+            if(strcmp(client_addr->addr, odscl->odsc.owner) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if(!found) {
+            DEBUG_OUT("Adding %s to kill list.\n", odscl->odsc.owner);
+            client_addr = malloc(sizeof(*client_addr));
+            client_addr->addr = strdup(odscl->odsc.owner);
+            list_add(&client_addr->entry, &client_list);
+        }
+    }
+    ABT_mutex_unlock(server->odsc_mutex);
+
+    list_for_each_entry_safe(client_addr, temp, &client_list, struct addr_list_entry, entry) {
+        DEBUG_OUT("Sending kill signal to %s.\n", client_addr->addr);
+        kill_client(server, client_addr->addr);
+        list_del(&client_addr->entry);
+        free(client_addr->addr);
+        free(client_addr);
+    }
+}
+
 static int server_destroy(dspaces_provider_t server)
 {
     int i;
@@ -760,6 +820,8 @@ static int server_destroy(dspaces_provider_t server)
         ABT_xstream_free(&server->drain_xstream);
         DEBUG_OUT("drain thread stopped.\n");
     }
+
+    kill_local_clients(server);
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);
@@ -868,6 +930,10 @@ static void put_local_rpc(hg_handle_t handle)
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
 
     DEBUG_OUT("In the local put rpc\n");
+
+    if(server->f_kill) {
+        fprintf(stderr, "WARNING: (%s): got put rpc with local storage, but server is shutting down. This will likely cause problems...\n", __func__);
+    }
 
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);

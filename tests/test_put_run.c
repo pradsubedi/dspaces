@@ -69,7 +69,7 @@ static int generate_nd(double *mnd, unsigned int ts, int dims)
     return 0;
 }
 
-static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars, int dims)
+static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars, int dims, int local_mode)
 {
 	double **data_tab = (double **)malloc(sizeof(double *) * num_vars);
 	char var_name[128];
@@ -106,10 +106,10 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
-		//if(rank_%2 == 0)
+		if(!local_mode)
 			err = dspaces_put(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
-		//else
-		//	err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
+		else
+			err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
 		if(err!=0){
 			fprintf(stderr, "dspaces_put returned error %d", err);
 			return err;
@@ -138,20 +138,19 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
 }
 
 int test_put_run(char *listen_addr_str, int ndims, int* npdim, 
-	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, 
+	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, int local_mode,
 	MPI_Comm gcomm)
 {
 	gcomm_ = gcomm;
 	elem_size_ = elem_size;
 	timesteps_ = timestep;
+    int i, ret;
 
 	dspaces_client_t ndcl = dspaces_CLIENT_NULL;
 
-    int ret = 0;
+	ret = 0;
 
-
-	int i;
-	for(i = 0; i < ndims; i++){
+    for(i = 0; i < ndims; i++){
         np[i] = npdim[i];
         sp[i] = spdim[i];
 	}
@@ -174,7 +173,7 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 
 	unsigned int ts;
 	for(ts = 1; ts <= timesteps_; ts++){
-		ret = couple_write_nd(ndcl, ts, num_vars, ndims);
+		ret = couple_write_nd(ndcl, ts, num_vars, ndims, local_mode);
 		if(ret!=0){
 			ret = -1;
 			goto error;

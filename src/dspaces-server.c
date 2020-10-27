@@ -53,7 +53,9 @@ struct dspaces_provider{
     hg_id_t kill_id;
     struct ds_gspace *dsg; 
     char **server_address;  
+    char *listen_addr_str;
     int rank;
+    int comm_size;
     int f_debug;
     int f_drain;
     int f_kill;
@@ -231,33 +233,29 @@ static int init_sspace(struct bbox *default_domain, struct ds_gspace *dsg_l)
     return err;
 }
 
-static int write_address(dspaces_provider_t server, MPI_Comm comm){
-
-    hg_addr_t my_addr  = HG_ADDR_NULL;
-    hg_return_t hret   = HG_SUCCESS;
-    hg_size_t my_addr_size;
-
-    int comm_size, rank, ret = 0;
-    MPI_Comm_size(comm, &comm_size);
-    MPI_Comm_rank(comm, &rank);
-
+static int write_conf(dspaces_provider_t server, MPI_Comm comm)
+{
+    hg_addr_t my_addr = HG_ADDR_NULL;
     char *my_addr_str = NULL;
-    int self_addr_str_size = 0;
-    char *addr_str_buf = NULL;
-    int *sizes = NULL;
-    int *sizes_psum = NULL;
-    char **addr_strs = NULL;
+    hg_size_t my_addr_size = 0;
+    int *addr_sizes;
+    hg_return_t hret = HG_SUCCESS;
+    int addr_buf_size = 0;
+    int *sizes_psum;
+    char *addr_str_buf;
+    FILE *fd;
+    int i, ret;
 
     hret = margo_addr_self(server->mid, &my_addr);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: margo_addr_self() returned %d\n", hret);
+        fprintf(stderr, "ERROR: (%s): margo_addr_self() returned %d\n", __func__, hret);
         ret = -1;
         goto error;
-    }
+    } 
 
     hret = margo_addr_to_string(server->mid, NULL, &my_addr_size, my_addr);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: margo_addr_to_string() returned %d\n", hret);
+        fprintf(stderr, "ERROR: (%s): margo_addr_to_string() returned %d\n", __func__, hret);
         ret = -1;
         goto errorfree;
     }
@@ -265,74 +263,58 @@ static int write_address(dspaces_provider_t server, MPI_Comm comm){
     my_addr_str = malloc(my_addr_size);
     hret = margo_addr_to_string(server->mid, my_addr_str, &my_addr_size, my_addr);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: margo_addr_to_string() returned %d\n", hret);
+        fprintf(stderr, "ERROR: (%s): margo_addr_to_string() returned %d\n", __func__, hret);
         ret = -1;
         goto errorfree;
     }
-    
 
-    sizes = malloc(comm_size * sizeof(*sizes));
-    self_addr_str_size = (int)strlen(my_addr_str) + 1;
-    MPI_Allgather(&self_addr_str_size, 1, MPI_INT, sizes, 1, MPI_INT, comm);
-
-    int addr_buf_size = 0;
-    for (int i = 0; i < comm_size; ++i)
-    {
-        addr_buf_size = addr_buf_size + sizes[i];
-    }
-
-    sizes_psum = malloc((comm_size) * sizeof(*sizes_psum));
-    sizes_psum[0]=0;
-    for (int i = 1; i < comm_size; i++)
-        sizes_psum[i] = sizes_psum[i-1] + sizes[i-1];
-
+    MPI_Comm_size(comm, &server->comm_size);
+    addr_sizes = malloc(server->comm_size * sizeof(*addr_sizes));
+    sizes_psum = malloc(server->comm_size * sizeof(*sizes_psum));
+    MPI_Allgather(&my_addr_size, 1, MPI_INT, addr_sizes, 1, MPI_INT, comm);
+    sizes_psum[0] = 0;
+    for(i = 0; i < server->comm_size; i++) {
+        addr_buf_size += addr_sizes[i];
+        if(i) {
+            sizes_psum[i] = sizes_psum[i-1] + addr_sizes[i=1];
+        }
+    }    
     addr_str_buf = malloc(addr_buf_size);
-    MPI_Allgatherv(my_addr_str, self_addr_str_size, MPI_CHAR, addr_str_buf, sizes, sizes_psum, MPI_CHAR, comm);
+    MPI_Allgatherv(my_addr_str, my_addr_size, MPI_CHAR, addr_str_buf, addr_sizes, sizes_psum, MPI_CHAR, comm);
 
-    server->server_address = (char **)addr_str_buf_to_list(addr_str_buf, comm_size);
-
-    if(rank==0){
-        
-        for (int i = 1; i < comm_size; ++i)
-        {
-            addr_str_buf[sizes_psum[i]-1]='\n';
-        }
-        addr_str_buf[addr_buf_size-1]='\n';
-
-        int fd;
-        fd = open("servids.0", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd < 0)
-        {
-            fprintf(stderr, "ERROR: unable to write server_ids into file\n");
-            ret = -1;
-            goto errorfree;
-
-        }
-        int bytes_written = 0;
-        bytes_written = write(fd, addr_str_buf, addr_buf_size);
-        if (bytes_written != addr_buf_size)
-        {
-            fprintf(stderr, "ERROR: unable to write server_ids into opened file\n");
-            ret = -1;
-            free(addr_str_buf);
-            close(fd);
-            goto errorfree;
-
-        }
-        close(fd);
+    server->server_address = malloc(server->comm_size * sizeof(*server->server_address));
+    for(i = 0; i < server->comm_size; i++) {
+        server->server_address[i] = &addr_str_buf[sizes_psum[i]];
     }
-    free(my_addr_str);
-    free(sizes);
+
+    MPI_Comm_rank(comm, &server->rank);
+    if(server->rank == 0) {
+        fd = fopen("conf.ds", "w");
+        if(!fd) {
+            fprintf(stderr, "ERROR: %s: unable to open 'conf.ds' for writing.\n", __func__);
+            ret = -1; 
+            goto errorfree; 
+        }
+        fprintf(fd, "%d\n", server->comm_size);
+        for(i = 0; i < server->comm_size; i++) {
+            fprintf(fd, "%s\n", server->server_address[i]);
+        }
+        fprintf(fd, "%s\n", server->listen_addr_str);
+        fclose(fd);
+    }
+
+    free(my_addr_str); 
+    free(addr_sizes);
     free(sizes_psum);
     margo_addr_free(server->mid, my_addr);
 
-finish:
-    return ret;
+    return(ret);
+
 errorfree:
     margo_addr_free(server->mid, my_addr);
 error:
     margo_finalize(server->mid);
-    goto finish;
+    return(ret);
 }
 
 static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
@@ -386,7 +368,7 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
 
         MPI_Comm_rank(comm, &dsg_l->rank);
 
-        write_address(server, comm);
+        write_conf(server, comm);
 
         err = init_sspace(&domain, dsg_l);
         if (err < 0) {
@@ -684,6 +666,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
     server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
     assert(server->mid);
 
+    server->listen_addr_str = strdup(listen_addr_str);
+
     ret = ABT_mutex_create(&server->odsc_mutex);
     ret = ABT_mutex_create(&server->ls_mutex);
     ret = ABT_mutex_create(&server->dht_mutex);
@@ -828,6 +812,7 @@ static int server_destroy(dspaces_provider_t server)
     free(server->dsg);
     free(server->server_address[0]);
     free(server->server_address);
+    free(server->listen_addr_str);
 
     MPI_Barrier(server->comm);
     MPI_Comm_free(&server->comm);

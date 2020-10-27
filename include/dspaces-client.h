@@ -23,11 +23,10 @@ typedef struct dspaces_client* dspaces_client_t;
  * @brief Creates a dspaces client.
  * @param[in] rank: rank of this process relative in the application
  * @param[out] client dspaces client
- * @param[in] debug: enable debugging
  *
  * @return dspaces_SUCCESS or error code defined in dspaces-common.h
  */
-int client_init(char *listen_addr_str, int rank, dspaces_client_t* client);
+int client_init(int rank, dspaces_client_t* client);
 
 
 void dspaces_define_gdim (dspaces_client_t client, 

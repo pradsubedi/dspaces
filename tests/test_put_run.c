@@ -137,9 +137,9 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
     return 0;
 }
 
-int test_put_run(char *listen_addr_str, int ndims, int* npdim, 
+int test_put_run(int ndims, int* npdim, 
 	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, int local_mode,
-	MPI_Comm gcomm)
+	int terminate, MPI_Comm gcomm)
 {
 	gcomm_ = gcomm;
 	elem_size_ = elem_size;
@@ -163,7 +163,7 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 
 	MPI_Comm_rank(gcomm_, &rank_);
 	
-    ret = client_init(listen_addr_str, rank_, &ndcl);
+    ret = client_init(rank_, &ndcl);
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -182,20 +182,24 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 	}
 
 	MPI_Barrier(gcomm_);
-	if(rank_ == 0){
+	if(rank_ == 0) {
 		fprintf(stdout, "%s(): done\n", __func__);
 	}
 	tm_st = timer_read(&timer_);
+
+    if(rank_ == 0 && terminate) {
+        fprintf(stderr, "Writer sending kill signal to server.\n");
+        dspaces_kill(ndcl);
+    }
 
     client_finalize(ndcl);
 
 	tm_end = timer_read(&timer_);
 
-
 	fprintf(stdout, "TIMING_PERF Close_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
+        
 
-
-        return 0;
+    return 0;
 
  error:
 

@@ -148,8 +148,7 @@ static int build_address(dspaces_client_t client){
     int addr_str_buf_len = 0, num_addrs = 0;
     int wait_time, time = 0;
     int fd;
-
-    char* file_name = "servids.0";
+    char *file_name = "servids.0";
     
     do {
         fd = open(file_name, O_RDONLY);
@@ -225,8 +224,53 @@ fini:
     return ret;
 }
 
-int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
+static int read_conf(dspaces_client_t client, char **listen_addr_str)
+{
+    int wait_time, time = 0;
+    int size;
+    FILE *fd;
+    fpos_t lstart;
+    int i, ret;   
+ 
+    do {
+        fd = fopen("conf.ds", "r");
+        if(!fd) {
+            if(errno == ENOENT) {
+                DEBUG_OUT("unable to find config file 'conf.ds' after %d seconds, will try again...\n", time);
+            } else {
+                fprintf(stderr, "could not open config file 'conf.ds'.\n");
+                goto fini;
+            }
+        }
+        wait_time = (rand() % 3) + 1;
+        time += wait_time;
+        sleep(wait_time);
+    }while(!fd);
+
+    fscanf(fd, "%d\n", &client->size_sp);
+    client->server_address = malloc(client->size_sp * sizeof(*client->server_address));
+    for(i = 0; i < client->size_sp; i++) {
+        fgetpos(fd, &lstart);
+        fscanf(fd, "%*s%n\n", &size);
+        fsetpos(fd, &lstart);
+        client->server_address[i] = malloc(size + 1);
+        fscanf(fd, "%s\n", client->server_address[i]);
+    }
+    fgetpos(fd, &lstart);
+    fscanf(fd, "%*s%n\n", &size);
+    fsetpos(fd, &lstart);
+    *listen_addr_str = malloc(size + 1);
+    fscanf(fd, "%s\n", *listen_addr_str);
+
+    ret = 0;
+
+fini:
+    return ret;
+}
+
+int client_init(int rank, dspaces_client_t* c)
 {   
+    char *listen_addr_str;
     const char *envdebug = getenv("DSPACES_DEBUG"); 
     dspaces_client_t client = (dspaces_client_t)calloc(1, sizeof(*client));
     if(!client) return dspaces_ERR_ALLOCATION;
@@ -243,8 +287,14 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
     if(!(client->dcg))
         return dspaces_ERR_ALLOCATION;
 
+    read_conf(client, &listen_addr_str);
+
+    ABT_init(0, NULL);
+
     client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 0, 0);
     assert(client->mid);
+
+    free(listen_addr_str);
 
     ABT_mutex_create(&client->ls_mutex);
     ABT_mutex_create(&client->drain_mutex);
@@ -286,8 +336,6 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
         margo_register_data(client->mid, client->kill_id, (void *)client, NULL);          
     }
 
-    build_address(client);
-
     get_ss_info(client);
     DEBUG_OUT("Total max versions on the client side is %d\n", client->dcg->max_versions);
 
@@ -303,7 +351,7 @@ int client_init(char *listen_addr_str, int rank, dspaces_client_t* c)
 
 int client_finalize(dspaces_client_t client)
 {
-    DEBUG_OUT("client rank %d in %s\n", client->rank, __func__);
+    DEBUG_OUT("finalizing.\n");
 
     do { // watch out for spurious wake
         ABT_mutex_lock(client->drain_mutex);
@@ -319,11 +367,6 @@ int client_finalize(dspaces_client_t client)
 
     DEBUG_OUT("all objects drained. Finalizing...\n");
 
-    if(client->listener_init) {
-        ABT_xstream_join(client->listener_xs);
-        ABT_xstream_free(&client->listener_xs);
-    }
-
     free_gdim_list(&client->dcg->gdim_list);
     free(client->server_address[0]);
     free(client->server_address);
@@ -331,6 +374,11 @@ int client_finalize(dspaces_client_t client)
     free(client->dcg);
 
     margo_finalize(client->mid);
+
+    if(client->listener_init) {
+        ABT_xstream_join(client->listener_xs);
+        ABT_xstream_free(&client->listener_xs);
+    }
 
     free(client);
 
@@ -496,7 +544,6 @@ static int get_data(dspaces_client_t client, int num_odscs, obj_descriptor req_o
 
 }
 
-
 int dspaces_put_local (dspaces_client_t client,
         const char *var_name,
         unsigned int ver, int elem_size,
@@ -510,8 +557,19 @@ int dspaces_put_local (dspaces_client_t client,
     int ret = dspaces_SUCCESS;
 
     if(!client->listener_init) {
-        margo_get_handler_pool(client->mid, &margo_pool);
-        ABT_xstream_create_basic(ABT_SCHED_BASIC_WAIT, 1, &margo_pool, ABT_SCHED_CONFIG_NULL, &client->listener_xs);
+        hret = margo_get_handler_pool(client->mid, &margo_pool);
+        if(hret != HG_SUCCESS || margo_pool == ABT_POOL_NULL) {
+            fprintf(stderr, "DSPACES_ERROR: %s: could not get handler pool (%d).\n", __func__, hret);
+        }
+        client->listener_xs = ABT_XSTREAM_NULL;
+        ret = ABT_xstream_create_basic(ABT_SCHED_BASIC_WAIT, 1, &margo_pool, ABT_SCHED_CONFIG_NULL, &client->listener_xs);
+        if(ret != ABT_SUCCESS) {
+            char err_str[1000];
+            ABT_error_get_str(ret, err_str, NULL);
+            fprintf(stderr, "DSPACES ERROR: %s: could not launch handler thread: %s\n", __func__, err_str);
+            return(dspaces_ERR_ARGOBOTS);
+        }
+        
         client->listener_init = 1;
     }
 
@@ -589,6 +647,8 @@ int dspaces_put_local (dspaces_client_t client,
     ret = out.ret;
     margo_free_output(handle, &out);
     margo_destroy(handle);
+    margo_addr_free(client->mid, server_addr);
+
     return ret;
 
 }
@@ -818,7 +878,7 @@ static void drain_rpc(hg_handle_t handle)
     client->local_put_count--;
     if(client->local_put_count == 0 && client->f_final) {
         DEBUG_OUT("signaling all objects drained.\n");
-        ABT_cond_signal(&client->drain_cond);
+        ABT_cond_signal(client->drain_cond);
     }
     ABT_mutex_unlock(client->drain_mutex);
     DEBUG_OUT("%d objects left to drain...\n", client->local_put_count);
@@ -866,5 +926,4 @@ void dspaces_kill(dspaces_client_t client)
 
     margo_addr_free(client->mid, server_addr);
     margo_destroy(h);
-    
 }

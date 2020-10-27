@@ -104,6 +104,7 @@ static struct {
         int max_readers;
         int lock_type;      /* 1 - generic, 2 - custom */
         int hash_version;   /* 1 - ssd_hash_version_v1, 2 - ssd_hash_version_v2 */
+        int num_apps;
 } ds_conf;
 
 static struct {
@@ -116,6 +117,7 @@ static struct {
         {"max_readers",         &ds_conf.max_readers},
         {"lock_type",           &ds_conf.lock_type},
         {"hash_version",        &ds_conf.hash_version}, 
+        {"num_apps",            &ds_conf.num_apps}
 };
 
 static void eat_spaces(char *line)
@@ -327,6 +329,7 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
         ds_conf.max_readers = 1;
         ds_conf.lock_type = 1;
         ds_conf.hash_version = ssd_hash_version_v1;
+        ds_conf.num_apps = 1;
 
         err = parse_conf(conf_name);
         if (err < 0) {
@@ -379,6 +382,8 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
             fprintf(stderr, "%s(): ERROR ls_alloc() failed\n", __func__);
             goto err_free;
         }
+
+        dsg_l->num_apps = ds_conf.num_apps;
 
         INIT_LIST_HEAD(&dsg_l->obj_desc_drain_list);
         
@@ -589,8 +594,7 @@ static void drain_thread(void *arg)
 {
     dspaces_provider_t server = arg;
 
-    while (!server->f_kill)
-    {
+    while(server->f_kill > 0) {
         int counter = 0;
         DEBUG_OUT("Thread WOKEUP\n");
         do{
@@ -721,7 +725,7 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
     int err = dsg_alloc(server, "dataspaces.conf", comm);
     assert(err == 0);    
 
-    server->f_kill = 0;
+    server->f_kill = server->dsg->num_apps;
 
     if(server->f_drain) {
         //thread to drain the data
@@ -916,7 +920,7 @@ static void put_local_rpc(hg_handle_t handle)
 
     DEBUG_OUT("In the local put rpc\n");
 
-    if(server->f_kill) {
+    if(server->f_kill == 0) {
         fprintf(stderr, "WARNING: (%s): got put rpc with local storage, but server is shutting down. This will likely cause problems...\n", __func__);
     }
 
@@ -1331,6 +1335,7 @@ static void kill_rpc(hg_handle_t handle)
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     int32_t src, rank, parent, child1, child2;
+    int do_kill = 0;
     hg_return_t hret;
 
     hret = margo_get_input(handle, &src);
@@ -1342,14 +1347,19 @@ static void kill_rpc(hg_handle_t handle)
     child2 = child1 + 1;
 
     ABT_mutex_lock(server->kill_mutex);
-    if(server->f_kill) {
+    DEBUG_OUT("Kill tokens remaining: %d\n", server->f_kill);
+    if(server->f_kill == 0) {
+        //already shutting down
         ABT_mutex_unlock(server->kill_mutex);
         margo_free_input(handle, &src);
         margo_destroy(handle);
         return;
     }
-    DEBUG_OUT("Setting kill flag.\n");
-    server->f_kill = 1;
+    if(--server->f_kill == 0) {
+        DEBUG_OUT("Kill count is zero. Initiating shutdown.\n");
+        do_kill = 1;
+    }
+   
     ABT_mutex_unlock(server->kill_mutex);
 
     if((src == -1 || src > rank) && rank > 0) {
@@ -1364,7 +1374,9 @@ static void kill_rpc(hg_handle_t handle)
 
     margo_free_input(handle, &src);
     margo_destroy(handle);
-    server_destroy(server);
+    if(do_kill) {
+        server_destroy(server);
+    }
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)
 

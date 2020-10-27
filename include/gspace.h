@@ -55,7 +55,7 @@ struct ds_gspace {
         int rank;
         int size_sp;
         char **server_address;
-        
+        int num_apps;        
 };
 
 /* Shared space info. */

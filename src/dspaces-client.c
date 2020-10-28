@@ -913,7 +913,7 @@ void dspaces_kill(dspaces_client_t client)
 
     DEBUG_OUT("sending kill signal to servers.\n");
 
-    get_server_address(client, &server_addr);
+    margo_addr_lookup(client->mid, client->server_address[0], &server_addr);
     hret = margo_create(client->mid, server_addr, client->kill_id, &h);
     if(hret != HG_SUCCESS) {
         fprintf(stderr,"ERROR: (%s): margo_create() failed\n", __func__);

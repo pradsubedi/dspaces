@@ -1,6 +1,9 @@
 #!/bin/bash -e
 export PATH="@CMAKE_RUNTIME_OUTPUT_DIRECTORY@:${PATH}"
 
+storage_mode=$2
+storage_mode=${storage_mode:=server}
+
 ## Create dataspaces configuration file
 echo "## Config file for DataSpaces
 ndim = 3
@@ -8,44 +11,48 @@ dims = 256,256,256
 max_versions = 8
 max_readers = 8
 lock_type = 2
+num_apps = 2
 " > dataspaces.conf
+
+rm -rf conf.ds
+
 if [ $1 -eq 1 ]; then
-        rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer sockets 1 1 64 5 8
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator sockets
-        wait
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer 1 1 64 5 -s 8 -m $storage_mode -t
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator
+        wait $serverproc
 elif [ $1 -eq 2 ]; then
-        rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8 &
-        sleep 2
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 64 5 8
-        wait
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -s 8 -t
+        wait $serverproc
+        wait $writerproc
 elif [ $1 -eq 3 ]; then
-        rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8 &
-        sleep 2
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 32 5 8
-        wait
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 32 5 -s 8 -t
+        wait $serverproc
+        wait $writerproc
 elif [ $1 -eq 4 ]; then
-        rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 5
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8 &
-        sleep 2
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 64 2 8
-        wait
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 2 -s 8 -t
+        wait $writerproc
+        wait $serverproc
 elif [ $1 -eq 5 ]; then
-        rm -rf servids.0
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
-        sleep 3
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader sockets 1 2 64 5 8 &
-        sleep 5
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer sockets 1 2 64 5 8
-        wait
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -s 8 -t &
+        readerproc=$!
+        sleep 7
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t
+        wait $readerproc
+        wait $serverproc
 fi

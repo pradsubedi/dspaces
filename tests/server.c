@@ -36,7 +36,11 @@ int main(int argc, char** argv)
 
     // make margo wait for finalize
     dspaces_server_fini(s);
-    
+
+    if(rank == 0) {
+        fprintf(stderr, "Server is all done!\n");
+    }   
+ 
     MPI_Finalize();
     return 0;
 

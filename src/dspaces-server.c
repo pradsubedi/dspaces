@@ -24,6 +24,8 @@
         } \
     }while(0);
 
+#define DSPACES_DEFAULT_NUM_HANDLERS 4
+
 static enum storage_type st = column_major;
 
 typedef enum obj_update_type {
@@ -32,6 +34,11 @@ typedef enum obj_update_type {
 } obj_update_t;
 
 int cond_num = 0;
+
+struct addr_list_entry {
+    struct list_head entry;
+    char *addr;
+};
 
 struct dspaces_provider{
     margo_instance_id mid;
@@ -46,8 +53,11 @@ struct dspaces_provider{
     hg_id_t kill_id;
     struct ds_gspace *dsg; 
     char **server_address;  
+    char *listen_addr_str;
     int rank;
+    int comm_size;
     int f_debug;
+    int f_drain;
     int f_kill;
 
     MPI_Comm comm;
@@ -94,6 +104,7 @@ static struct {
         int max_readers;
         int lock_type;      /* 1 - generic, 2 - custom */
         int hash_version;   /* 1 - ssd_hash_version_v1, 2 - ssd_hash_version_v2 */
+        int num_apps;
 } ds_conf;
 
 static struct {
@@ -106,6 +117,7 @@ static struct {
         {"max_readers",         &ds_conf.max_readers},
         {"lock_type",           &ds_conf.lock_type},
         {"hash_version",        &ds_conf.hash_version}, 
+        {"num_apps",            &ds_conf.num_apps}
 };
 
 static void eat_spaces(char *line)
@@ -223,33 +235,29 @@ static int init_sspace(struct bbox *default_domain, struct ds_gspace *dsg_l)
     return err;
 }
 
-static int write_address(dspaces_provider_t server, MPI_Comm comm){
-
-    hg_addr_t my_addr  = HG_ADDR_NULL;
-    hg_return_t hret   = HG_SUCCESS;
-    hg_size_t my_addr_size;
-
-    int comm_size, rank, ret = 0;
-    MPI_Comm_size(comm, &comm_size);
-    MPI_Comm_rank(comm, &rank);
-
+static int write_conf(dspaces_provider_t server, MPI_Comm comm)
+{
+    hg_addr_t my_addr = HG_ADDR_NULL;
     char *my_addr_str = NULL;
-    int self_addr_str_size = 0;
-    char *addr_str_buf = NULL;
-    int *sizes = NULL;
-    int *sizes_psum = NULL;
-    char **addr_strs = NULL;
+    hg_size_t my_addr_size = 0;
+    int *addr_sizes;
+    hg_return_t hret = HG_SUCCESS;
+    int addr_buf_size = 0;
+    int *sizes_psum;
+    char *addr_str_buf;
+    FILE *fd;
+    int i, ret;
 
     hret = margo_addr_self(server->mid, &my_addr);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: margo_addr_self() returned %d\n", hret);
+        fprintf(stderr, "ERROR: (%s): margo_addr_self() returned %d\n", __func__, hret);
         ret = -1;
         goto error;
-    }
+    } 
 
     hret = margo_addr_to_string(server->mid, NULL, &my_addr_size, my_addr);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: margo_addr_to_string() returned %d\n", hret);
+        fprintf(stderr, "ERROR: (%s): margo_addr_to_string() returned %d\n", __func__, hret);
         ret = -1;
         goto errorfree;
     }
@@ -257,74 +265,58 @@ static int write_address(dspaces_provider_t server, MPI_Comm comm){
     my_addr_str = malloc(my_addr_size);
     hret = margo_addr_to_string(server->mid, my_addr_str, &my_addr_size, my_addr);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: margo_addr_to_string() returned %d\n", hret);
+        fprintf(stderr, "ERROR: (%s): margo_addr_to_string() returned %d\n", __func__, hret);
         ret = -1;
         goto errorfree;
     }
-    
 
-    sizes = malloc(comm_size * sizeof(*sizes));
-    self_addr_str_size = (int)strlen(my_addr_str) + 1;
-    MPI_Allgather(&self_addr_str_size, 1, MPI_INT, sizes, 1, MPI_INT, comm);
-
-    int addr_buf_size = 0;
-    for (int i = 0; i < comm_size; ++i)
-    {
-        addr_buf_size = addr_buf_size + sizes[i];
-    }
-
-    sizes_psum = malloc((comm_size) * sizeof(*sizes_psum));
-    sizes_psum[0]=0;
-    for (int i = 1; i < comm_size; i++)
-        sizes_psum[i] = sizes_psum[i-1] + sizes[i-1];
-
+    MPI_Comm_size(comm, &server->comm_size);
+    addr_sizes = malloc(server->comm_size * sizeof(*addr_sizes));
+    sizes_psum = malloc(server->comm_size * sizeof(*sizes_psum));
+    MPI_Allgather(&my_addr_size, 1, MPI_INT, addr_sizes, 1, MPI_INT, comm);
+    sizes_psum[0] = 0;
+    for(i = 0; i < server->comm_size; i++) {
+        addr_buf_size += addr_sizes[i];
+        if(i) {
+            sizes_psum[i] = sizes_psum[i-1] + addr_sizes[i=1];
+        }
+    }    
     addr_str_buf = malloc(addr_buf_size);
-    MPI_Allgatherv(my_addr_str, self_addr_str_size, MPI_CHAR, addr_str_buf, sizes, sizes_psum, MPI_CHAR, comm);
+    MPI_Allgatherv(my_addr_str, my_addr_size, MPI_CHAR, addr_str_buf, addr_sizes, sizes_psum, MPI_CHAR, comm);
 
-    server->server_address = (char **)addr_str_buf_to_list(addr_str_buf, comm_size);
-
-    if(rank==0){
-        
-        for (int i = 1; i < comm_size; ++i)
-        {
-            addr_str_buf[sizes_psum[i]-1]='\n';
-        }
-        addr_str_buf[addr_buf_size-1]='\n';
-
-        int fd;
-        fd = open("servids.0", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd < 0)
-        {
-            fprintf(stderr, "ERROR: unable to write server_ids into file\n");
-            ret = -1;
-            goto errorfree;
-
-        }
-        int bytes_written = 0;
-        bytes_written = write(fd, addr_str_buf, addr_buf_size);
-        if (bytes_written != addr_buf_size)
-        {
-            fprintf(stderr, "ERROR: unable to write server_ids into opened file\n");
-            ret = -1;
-            free(addr_str_buf);
-            close(fd);
-            goto errorfree;
-
-        }
-        close(fd);
+    server->server_address = malloc(server->comm_size * sizeof(*server->server_address));
+    for(i = 0; i < server->comm_size; i++) {
+        server->server_address[i] = &addr_str_buf[sizes_psum[i]];
     }
-    free(my_addr_str);
-    free(sizes);
+
+    MPI_Comm_rank(comm, &server->rank);
+    if(server->rank == 0) {
+        fd = fopen("conf.ds", "w");
+        if(!fd) {
+            fprintf(stderr, "ERROR: %s: unable to open 'conf.ds' for writing.\n", __func__);
+            ret = -1; 
+            goto errorfree; 
+        }
+        fprintf(fd, "%d\n", server->comm_size);
+        for(i = 0; i < server->comm_size; i++) {
+            fprintf(fd, "%s\n", server->server_address[i]);
+        }
+        fprintf(fd, "%s\n", server->listen_addr_str);
+        fclose(fd);
+    }
+
+    free(my_addr_str); 
+    free(addr_sizes);
     free(sizes_psum);
     margo_addr_free(server->mid, my_addr);
 
-finish:
-    return ret;
+    return(ret);
+
 errorfree:
     margo_addr_free(server->mid, my_addr);
 error:
     margo_finalize(server->mid);
-    goto finish;
+    return(ret);
 }
 
 static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
@@ -337,6 +329,7 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
         ds_conf.max_readers = 1;
         ds_conf.lock_type = 1;
         ds_conf.hash_version = ssd_hash_version_v1;
+        ds_conf.num_apps = 1;
 
         err = parse_conf(conf_name);
         if (err < 0) {
@@ -378,7 +371,7 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
 
         MPI_Comm_rank(comm, &dsg_l->rank);
 
-        write_address(server, comm);
+        write_conf(server, comm);
 
         err = init_sspace(&domain, dsg_l);
         if (err < 0) {
@@ -389,6 +382,8 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
             fprintf(stderr, "%s(): ERROR ls_alloc() failed\n", __func__);
             goto err_free;
         }
+
+        dsg_l->num_apps = ds_conf.num_apps;
 
         INIT_LIST_HEAD(&dsg_l->obj_desc_drain_list);
         
@@ -599,8 +594,7 @@ static void drain_thread(void *arg)
 {
     dspaces_provider_t server = arg;
 
-    while (!server->f_kill)
-    {
+    while(server->f_kill > 0) {
         int counter = 0;
         DEBUG_OUT("Thread WOKEUP\n");
         do{
@@ -617,19 +611,20 @@ static void drain_thread(void *arg)
                 break;
                 
             }
-            ABT_mutex_unlock(server->odsc_mutex);
             if(counter == 1) {
+                list_del(&odscl->odsc_entry);
+                ABT_mutex_unlock(server->odsc_mutex);
                 int ret = get_client_data(odsc, server);
                 DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
-                if(ret == dspaces_SUCCESS){
+                if(ret != dspaces_SUCCESS){
                     ABT_mutex_lock(server->odsc_mutex);
-                    //delete moved obj_descriptor from the list
-                    DEBUG_OUT("Deleting drain entry\n");
-                    list_del(&odscl->odsc_entry);
+                    DEBUG_OUT("Drain failed, returning object to queue...\n");
+                    list_add_tail(&odscl->odsc_entry, &server->dsg->obj_desc_drain_list);
                     ABT_mutex_unlock(server->odsc_mutex);
                 }
                 sleep(1);
-
+            } else {
+                ABT_mutex_unlock(server->odsc_mutex);
             }
             
         }while(counter == 1); 
@@ -645,9 +640,12 @@ static void drain_thread(void *arg)
 int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t* sv)
 {
     const char *envdebug = getenv("DSPACES_DEBUG");
+    const char *envnthreads = getenv("DSPACES_NUM_HANDLERS");
+    const char *envdrain = getenv("DSPACES_DRAIN");
     dspaces_provider_t server;
     hg_bool_t flag;
     hg_id_t id;
+    int num_handlers = DSPACES_DEFAULT_NUM_HANDLERS;
     int ret; 
 
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
@@ -658,11 +656,21 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         server->f_debug = 1;
     }
 
+    if(envnthreads) {
+        num_handlers = atoi(envnthreads);
+    }
+
+    if(envdrain) {
+        server->f_drain = 1;
+    }
+
     MPI_Comm_dup(comm, &server->comm);
     MPI_Comm_rank(comm, &server->rank);
 
-    server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, 4);
+    server->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
     assert(server->mid);
+
+    server->listen_addr_str = strdup(listen_addr_str);
 
     ret = ABT_mutex_create(&server->odsc_mutex);
     ret = ABT_mutex_create(&server->ls_mutex);
@@ -683,7 +691,6 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,          &flag);
         margo_registered_name(server->mid, "kill_rpc",          &server->kill_id,           &flag);
     } else {
-
         server->put_id =
             MARGO_REGISTER(server->mid, "put_rpc", bulk_gdim_t, bulk_out_t, put_rpc);
         margo_register_data(server->mid, server->put_id, (void*)server, NULL);
@@ -718,15 +725,72 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
     int err = dsg_alloc(server, "dataspaces.conf", comm);
     assert(err == 0);    
 
+    server->f_kill = server->dsg->num_apps;
+
+    if(server->f_drain) {
+        //thread to drain the data
+        ABT_xstream_create(ABT_SCHED_NULL, &server->drain_xstream);
+        ABT_xstream_get_main_pools(server->drain_xstream, 1, &server->drain_pool);
+        ABT_thread_create(server->drain_pool, drain_thread, server, ABT_THREAD_ATTR_NULL, &server->drain_t); 
+    }
+
     *sv = server;
 
-    //thread to drain the data
-    server->f_kill = 0;
-    ABT_xstream_create(ABT_SCHED_NULL, &server->drain_xstream);
-    ABT_xstream_get_main_pools(server->drain_xstream, 1, &server->drain_pool);
-    ABT_thread_create(server->drain_pool, drain_thread, server, ABT_THREAD_ATTR_NULL, &server->drain_t); 
-
     return dspaces_SUCCESS;
+}
+
+static void kill_client(dspaces_provider_t server, char *client_addr)
+{
+    hg_addr_t server_addr;
+    hg_handle_t h;
+    int arg = -1;
+
+    margo_addr_lookup(server->mid, client_addr, &server_addr);
+    margo_create(server->mid, server_addr, server->kill_id, &h);
+    margo_forward(h, &arg);
+    margo_addr_free(server->mid, server_addr);
+    margo_destroy(h);
+}
+
+/*
+ * Clients with local data need to know when it's safe to finalize. Send kill rpc to any clients in the drain list.
+ */
+static void kill_local_clients(dspaces_provider_t server)
+{
+    struct obj_desc_list *odscl;
+    struct list_head client_list;
+    struct addr_list_entry *client_addr, *temp;
+    int found;
+
+    INIT_LIST_HEAD(&client_list);
+
+    DEBUG_OUT("Killing clients with local storage.\n");
+
+    ABT_mutex_lock(server->odsc_mutex);
+    list_for_each_entry(odscl, &(server->dsg->obj_desc_drain_list), struct obj_desc_list, odsc_entry) {
+        found = 0;
+        list_for_each_entry(client_addr, &client_list, struct addr_list_entry, entry) {
+            if(strcmp(client_addr->addr, odscl->odsc.owner) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if(!found) {
+            DEBUG_OUT("Adding %s to kill list.\n", odscl->odsc.owner);
+            client_addr = malloc(sizeof(*client_addr));
+            client_addr->addr = strdup(odscl->odsc.owner);
+            list_add(&client_addr->entry, &client_list);
+        }
+    }
+    ABT_mutex_unlock(server->odsc_mutex);
+
+    list_for_each_entry_safe(client_addr, temp, &client_list, struct addr_list_entry, entry) {
+        DEBUG_OUT("Sending kill signal to %s.\n", client_addr->addr);
+        kill_client(server, client_addr->addr);
+        list_del(&client_addr->entry);
+        free(client_addr->addr);
+        free(client_addr);
+    }
 }
 
 static int server_destroy(dspaces_provider_t server)
@@ -738,16 +802,21 @@ static int server_destroy(dspaces_provider_t server)
         fprintf(stderr, "Finishing up, waiting for asynchronous jobs to finish...\n");
     }
 
-    ABT_thread_free(&server->drain_t);
-    ABT_xstream_join(server->drain_xstream);
-    ABT_xstream_free(&server->drain_xstream);
-    DEBUG_OUT("drain thread stopped.\n");
+    if(server->f_drain) {
+        ABT_thread_free(&server->drain_t);
+        ABT_xstream_join(server->drain_xstream);
+        ABT_xstream_free(&server->drain_xstream);
+        DEBUG_OUT("drain thread stopped.\n");
+    }
+
+    kill_local_clients(server);
 
     free_sspace(server->dsg);
     ls_free(server->dsg->ls);
     free(server->dsg);
     free(server->server_address[0]);
     free(server->server_address);
+    free(server->listen_addr_str);
 
     MPI_Barrier(server->comm);
     MPI_Comm_free(&server->comm);
@@ -755,7 +824,6 @@ static int server_destroy(dspaces_provider_t server)
         fprintf(stderr, "Finalizing servers.\n");
     }
     margo_finalize(server->mid);
-    free(server);
 }
 
 static void put_rpc(hg_handle_t handle)
@@ -769,6 +837,11 @@ static void put_rpc(hg_handle_t handle)
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    
+    if(server->f_kill == 0) {
+        fprintf(stderr, "WARNING: put rpc received when server is finalizing. This will likely cause problems...\n");
+    }
+
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
 
@@ -850,6 +923,10 @@ static void put_local_rpc(hg_handle_t handle)
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
 
     DEBUG_OUT("In the local put rpc\n");
+
+    if(server->f_kill == 0) {
+        fprintf(stderr, "WARNING: (%s): got put rpc with local storage, but server is shutting down. This will likely cause problems...\n", __func__);
+    }
 
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
@@ -1086,7 +1163,6 @@ static void get_rpc(hg_handle_t handle)
     obj_data_free(od);
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
-    margo_bulk_free(bulk_handle);
     margo_destroy(handle);
 }
 DEFINE_MARGO_RPC_HANDLER(get_rpc)
@@ -1262,6 +1338,7 @@ static void kill_rpc(hg_handle_t handle)
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     int32_t src, rank, parent, child1, child2;
+    int do_kill = 0;
     hg_return_t hret;
 
     hret = margo_get_input(handle, &src);
@@ -1273,14 +1350,19 @@ static void kill_rpc(hg_handle_t handle)
     child2 = child1 + 1;
 
     ABT_mutex_lock(server->kill_mutex);
-    if(server->f_kill) {
+    DEBUG_OUT("Kill tokens remaining: %d\n", server->f_kill);
+    if(server->f_kill == 0) {
+        //already shutting down
         ABT_mutex_unlock(server->kill_mutex);
         margo_free_input(handle, &src);
         margo_destroy(handle);
         return;
     }
-    DEBUG_OUT("Setting kill flag.\n");
-    server->f_kill = 1;
+    if(--server->f_kill == 0) {
+        DEBUG_OUT("Kill count is zero. Initiating shutdown.\n");
+        do_kill = 1;
+    }
+   
     ABT_mutex_unlock(server->kill_mutex);
 
     if((src == -1 || src > rank) && rank > 0) {
@@ -1295,11 +1377,14 @@ static void kill_rpc(hg_handle_t handle)
 
     margo_free_input(handle, &src);
     margo_destroy(handle);
-    server_destroy(server);
+    if(do_kill) {
+        server_destroy(server);
+    }
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)
 
 void dspaces_server_fini(dspaces_provider_t server)
 {
     margo_wait_for_finalize(server->mid);
+    free(server);
 }

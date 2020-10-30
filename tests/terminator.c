@@ -21,14 +21,7 @@ int main(int argc, char **argv)
     MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    if(rank == 0 && argc != 2) {
-        fprintf(stderr, "Usage: terminator transport_string\n"); 
-        return(-1);
-    }
-
-    listen_addr_str = argv[1];
-
-    client_init(listen_addr_str, rank, &ds);
+    client_init(rank, &ds);
 
     if(rank == 0) {
         dspaces_kill(ds);

@@ -824,7 +824,6 @@ static int server_destroy(dspaces_provider_t server)
         fprintf(stderr, "Finalizing servers.\n");
     }
     margo_finalize(server->mid);
-    free(server);
 }
 
 static void put_rpc(hg_handle_t handle)
@@ -838,6 +837,11 @@ static void put_rpc(hg_handle_t handle)
 
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    
+    if(server->f_kill == 0) {
+        fprintf(stderr, "WARNING: put rpc received when server is finalizing. This will likely cause problems...\n");
+    }
+
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
 
@@ -1159,7 +1163,6 @@ static void get_rpc(hg_handle_t handle)
     obj_data_free(od);
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
-    margo_bulk_free(bulk_handle);
     margo_destroy(handle);
 }
 DEFINE_MARGO_RPC_HANDLER(get_rpc)
@@ -1383,4 +1386,5 @@ DEFINE_MARGO_RPC_HANDLER(kill_rpc)
 void dspaces_server_fini(dspaces_provider_t server)
 {
     margo_wait_for_finalize(server->mid);
+    free(server);
 }

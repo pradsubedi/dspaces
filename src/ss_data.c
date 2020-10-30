@@ -725,7 +725,7 @@ char *obj_desc_sprint(obj_descriptor *odsc)
     str = alloc_sprintf("obj_descriptor = {\n"
                 "\t.name = %s,\n"
                 "\t.owner = %s,\n"
-                "\t.version = %d\n"
+                "\t.version = %d,\n"
                 "\t.bb = ", odsc->name, odsc->owner, odsc->version);
     str = str_append_const(str_append(str, bbox_sprint(&odsc->bb)), "}\n");
 

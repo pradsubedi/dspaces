@@ -14,7 +14,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include "ss_data.h"
-#include "dspaces-client.h"
+#include "dspaces.h"
 #include "gspace.h"
 
 #define DEBUG_OUT(args...) \

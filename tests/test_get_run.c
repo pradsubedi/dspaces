@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <margo.h>
-#include <dspaces-client.h>
+#include <dspaces.h>
 #include "timer.h"
 #include "mpi.h"
 

@@ -7,14 +7,7 @@ include (CMakePackageConfigHelpers)
 # where to install files for "find_package"
 set (dspaces-pkg "share/cmake/dspaces")
 
-#
-# library version set here (e.g. for shared libs).
-#
-set (dspaces_VERSION_MAJOR 0)
-set (dspaces_VERSION_MINOR 1)
-set (dspaces_VERSION_PATCH 0)
 set (dspaces-vers "${dspaces_VERSION_MAJOR}.${dspaces_VERSION_MINOR}")
-set (dspaces_VERSION "${dspaces-vers}.${dspaces_VERSION_PATCH}")
 
 add_library(dspaces ${dspaces-src})
 target_link_libraries (dspaces margo m pthread)
@@ -42,7 +35,7 @@ configure_file (dspaces-config.cmake.in dspaces-config.cmake @ONLY)
 
 # some bits for the pkg-config file
 set (DEST_DIR "${CMAKE_INSTALL_PREFIX}")
-set (PRIVATE_LIBS "-ldspaces -lpthread")
+set (PRIVATE_LIBS "-ldspaces -lpthread -lmargo -labt -lmercury -lm")
 configure_file ("dspaces.pc.in" "dspaces.pc" @ONLY)
 
 #
@@ -58,8 +51,5 @@ install (FILES "${CMAKE_CURRENT_BINARY_DIR}/dspaces-config.cmake"
                "${CMAKE_CURRENT_BINARY_DIR}/dspaces-config-version.cmake"
                "../cmake/xpkg-import.cmake"
          DESTINATION ${dspaces-pkg} )
-install (DIRECTORY ../include
-         DESTINATION ${DEST_DIR}
-         FILES_MATCHING PATTERN "*dspaces-*.h")
 install (FILES "${CMAKE_CURRENT_BINARY_DIR}/dspaces.pc"
 		DESTINATION "lib/pkgconfig/")

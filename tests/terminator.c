@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <margo.h>
-#include <dspaces-client.h>
+#include <dspaces.h>
 #include "timer.h"
 #include "mpi.h"
 
@@ -21,13 +21,13 @@ int main(int argc, char **argv)
     MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    client_init(rank, &ds);
+    dspaces_init(rank, &ds);
 
     if(rank == 0) {
         dspaces_kill(ds);
     }
 
-    client_finalize(ds);            
+    dspaces_fini(ds);            
 
     MPI_Finalize();
 

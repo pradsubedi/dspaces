@@ -14,7 +14,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include "ss_data.h"
-#include "dspaces-client.h"
+#include "dspaces.h"
 #include "gspace.h"
 
 #define DEBUG_OUT(args...) \
@@ -268,7 +268,7 @@ fini:
     return ret;
 }
 
-int client_init(int rank, dspaces_client_t* c)
+int dspaces_init(int rank, dspaces_client_t* c)
 {   
     char *listen_addr_str;
     const char *envdebug = getenv("DSPACES_DEBUG"); 
@@ -349,7 +349,7 @@ int client_init(int rank, dspaces_client_t* c)
 }
 
 
-int client_finalize(dspaces_client_t client)
+int dspaces_fini(dspaces_client_t client)
 {
     DEBUG_OUT("finalizing.\n");
 

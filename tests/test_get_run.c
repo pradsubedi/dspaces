@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <margo.h>
-#include <dspaces-client.h>
+#include <dspaces.h>
 #include "timer.h"
 #include "mpi.h"
 
@@ -190,7 +190,7 @@ int test_get_run(int ndims, int* npdim,
 	MPI_Comm_rank(gcomm_, &rank_);
     MPI_Comm_size(gcomm_, &nproc_);
 
-    ret = client_init(rank_, &ndcl);
+    ret = dspaces_init(rank_, &ndcl);
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -216,7 +216,7 @@ int test_get_run(int ndims, int* npdim,
         dspaces_kill(ndcl);
     }
 
-    client_finalize(ndcl);
+    dspaces_fini(ndcl);
 	tm_end = timer_read(&timer_);
 
 	fprintf(stdout, "TIMING_PERF Close_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -224,7 +224,7 @@ int test_get_run(int ndims, int* npdim,
     return ret;
 
  error:
-    client_finalize(ndcl);
+    dspaces_fini(ndcl);
  	
     return ret;
     

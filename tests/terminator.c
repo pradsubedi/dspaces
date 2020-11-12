@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <margo.h>
-#include <dspaces-client.h>
+#include <dspaces.h>
 #include "timer.h"
 #include "mpi.h"
 
@@ -21,20 +21,13 @@ int main(int argc, char **argv)
     MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    if(rank == 0 && argc != 2) {
-        fprintf(stderr, "Usage: terminator transport_string\n"); 
-        return(-1);
-    }
-
-    listen_addr_str = argv[1];
-
-    client_init(listen_addr_str, rank, &ds);
+    dspaces_init(rank, &ds);
 
     if(rank == 0) {
         dspaces_kill(ds);
     }
 
-    client_finalize(ds);            
+    dspaces_fini(ds);            
 
     MPI_Finalize();
 

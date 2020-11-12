@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <margo.h>
-#include <dspaces-client.h>
+#include <dspaces.h>
 #include "timer.h"
 #include "mpi.h"
 
@@ -69,7 +69,7 @@ static int generate_nd(double *mnd, unsigned int ts, int dims)
     return 0;
 }
 
-static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars, int dims)
+static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars, int dims, int local_mode)
 {
 	double **data_tab = (double **)malloc(sizeof(double *) * num_vars);
 	char var_name[128];
@@ -106,10 +106,10 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
-		//if(rank_%2 == 0)
+		if(!local_mode)
 			err = dspaces_put(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
-		//else
-		//	err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
+		else
+			err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub, data_tab[i]);
 		if(err!=0){
 			fprintf(stderr, "dspaces_put returned error %d", err);
 			return err;
@@ -137,21 +137,20 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
     return 0;
 }
 
-int test_put_run(char *listen_addr_str, int ndims, int* npdim, 
-	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, 
-	MPI_Comm gcomm)
+int test_put_run(int ndims, int* npdim, 
+	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, int local_mode,
+	int terminate, MPI_Comm gcomm)
 {
 	gcomm_ = gcomm;
 	elem_size_ = elem_size;
 	timesteps_ = timestep;
+    int i, ret;
 
 	dspaces_client_t ndcl = dspaces_CLIENT_NULL;
 
-    int ret = 0;
+	ret = 0;
 
-
-	int i;
-	for(i = 0; i < ndims; i++){
+    for(i = 0; i < ndims; i++){
         np[i] = npdim[i];
         sp[i] = spdim[i];
 	}
@@ -164,7 +163,7 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 
 	MPI_Comm_rank(gcomm_, &rank_);
 	
-    ret = client_init(listen_addr_str, rank_, &ndcl);
+    ret = dspaces_init(rank_, &ndcl);
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -174,7 +173,7 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 
 	unsigned int ts;
 	for(ts = 1; ts <= timesteps_; ts++){
-		ret = couple_write_nd(ndcl, ts, num_vars, ndims);
+		ret = couple_write_nd(ndcl, ts, num_vars, ndims, local_mode);
 		if(ret!=0){
 			ret = -1;
 			goto error;
@@ -183,24 +182,28 @@ int test_put_run(char *listen_addr_str, int ndims, int* npdim,
 	}
 
 	MPI_Barrier(gcomm_);
-	if(rank_ == 0){
+	if(rank_ == 0) {
 		fprintf(stdout, "%s(): done\n", __func__);
 	}
 	tm_st = timer_read(&timer_);
 
-    client_finalize(ndcl);
+    if(rank_ == 0 && terminate) {
+        fprintf(stderr, "Writer sending kill signal to server.\n");
+        dspaces_kill(ndcl);
+    }
+
+    dspaces_fini(ndcl);
 
 	tm_end = timer_read(&timer_);
 
-
 	fprintf(stdout, "TIMING_PERF Close_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
+        
 
-
-        return 0;
+    return 0;
 
  error:
 
-    client_finalize(ndcl);
+    dspaces_fini(ndcl);
 
     return ret;
 

@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <margo.h>
-#include <dspaces-client.h>
+#include <dspaces.h>
 #include "timer.h"
 #include "mpi.h"
 
@@ -162,8 +162,8 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
     return ret;
 }
 
-int test_get_run(char *listen_addr, int ndims, int* npdim, 
-	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, 
+int test_get_run(int ndims, int* npdim, 
+	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, int terminate,
 	MPI_Comm gcomm)
 {
 	gcomm_ = gcomm;
@@ -190,7 +190,7 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 	MPI_Comm_rank(gcomm_, &rank_);
     MPI_Comm_size(gcomm_, &nproc_);
 
-    ret = client_init(listen_addr, rank_, &ndcl);
+    ret = dspaces_init(rank_, &ndcl);
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -206,16 +206,17 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
 	
 	MPI_Barrier(gcomm_);
 
-	if(rank_ == 0){
+	if(rank_ == 0) {
 		fprintf(stdout, "%s(): done\n", __func__);
 	}
 	tm_st = timer_read(&timer_);
 
-    if(rank_ == 0) {
+    if(rank_ == 0 && terminate) {
+        fprintf(stderr, "Reader sending kill signal to server.\n");
         dspaces_kill(ndcl);
     }
 
-    client_finalize(ndcl);
+    dspaces_fini(ndcl);
 	tm_end = timer_read(&timer_);
 
 	fprintf(stdout, "TIMING_PERF Close_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -223,7 +224,7 @@ int test_get_run(char *listen_addr, int ndims, int* npdim,
     return ret;
 
  error:
-    client_finalize(ndcl);
+    dspaces_fini(ndcl);
  	
     return ret;
     

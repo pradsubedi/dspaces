@@ -9,7 +9,7 @@
 #
 
 cmake_minimum_required (VERSION 3.0)
-project (dspaces C)
+project (dspaces VERSION 2.0.0 LANGUAGES C)
 #enable_testing ()
 
 include(GNUInstallDirs)
@@ -28,7 +28,6 @@ if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
 endif()
 
 option(ENABLE_TESTS    "Build tests" OFF)
-#option(ENABLE_EXAMPLES "Build examples" OFF)
 
 # add our cmake module directory to the path
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
@@ -45,11 +44,14 @@ set (BUILD_SHARED_LIBS "OFF" CACHE BOOL "Build a shared library")
 include (xpkg-import)
 xpkg_import_module (margo REQUIRED margo)
 
-add_subdirectory (src)
+find_package(MPI COMPONENTS REQUIRED)
+
+add_subdirectory(src)
+add_subdirectory(include)
 if(${ENABLE_TESTS})
   enable_testing()
-  add_subdirectory (tests)
+  add_subdirectory(tests)
 endif(${ENABLE_TESTS})
 if(${ENABLE_EXAMPLES})
-  add_subdirectory (examples)
+  add_subdirectory(examples)
 endif(${ENABLE_EXAMPLES})

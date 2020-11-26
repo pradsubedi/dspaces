@@ -278,7 +278,7 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
     for(i = 0; i < server->comm_size; i++) {
         addr_buf_size += addr_sizes[i];
         if(i) {
-            sizes_psum[i] = sizes_psum[i-1] + addr_sizes[i=1];
+            sizes_psum[i] = sizes_psum[i-1] + addr_sizes[i-1];
         }
     }    
     addr_str_buf = malloc(addr_buf_size);

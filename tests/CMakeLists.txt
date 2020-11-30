@@ -10,6 +10,9 @@ target_link_libraries(test_writer dspaces)
 add_executable(terminator terminator.c)
 target_link_libraries(terminator dspaces)
 
+add_executable(test_writer_f test_writer.f90)
+target_link_libraries(test_writer_f dspaces_fortran)
+
 configure_file(
   ${PROJECT_SOURCE_DIR}/tests/test_script.sh.in
   ${PROJECT_BINARY_DIR}/tests/test_script.sh
@@ -37,4 +40,6 @@ if (BASH_PROGRAM)
   set_tests_properties(Test_read_ts_subset_local PROPERTIES TIMEOUT 30)
   add_test (Test_read_early_local ${BASH_PROGRAM} test_script.sh 5 local)
   set_tests_properties(Test_read_early_local PROPERTIES TIMEOUT 30)
+  add_test (Test_fortran_binding ${BASH_PROGRAM} test_script.sh 6)
+  set_tests_properties(Test_fortran_binding PROPERTIES TIMEOUT 30)
 endif (BASH_PROGRAM)

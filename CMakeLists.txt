@@ -46,8 +46,18 @@ xpkg_import_module (margo REQUIRED margo)
 
 find_package(MPI COMPONENTS REQUIRED)
 
+include(CheckLanguage)
+check_language(Fortran)
+if(CMAKE_Fortran_COMPILER)
+    enable_language(Fortran)
+endif()
+if(CMAKE_Fortran_COMPILER_LOADED)
+    set(DSPACES_HAVE_FORTRAN TRUE)
+endif()
+
 add_subdirectory(src)
 add_subdirectory(include)
+add_subdirectory(bindings)
 if(${ENABLE_TESTS})
   enable_testing()
   add_subdirectory(tests)

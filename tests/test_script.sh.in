@@ -55,4 +55,10 @@ elif [ $1 -eq 5 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t
         wait $readerproc
         wait $serverproc
+elif [ $1 -eq 6 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer_f
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 terminator
+        wait $serverproc
 fi

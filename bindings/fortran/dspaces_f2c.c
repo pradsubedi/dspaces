@@ -30,6 +30,11 @@ void FC_GLOBAL(dspaces_put_f2c, DSPACES_PUT_F2C)(dspaces_client_t *client, const
     *ierr = dspaces_put(*client, name, *version, *size, *ndim, lb, ub, data);
 }
 
+void FC_GLOBAL(dspaces_put_local_f2c, DSPACES_PUT_LOCAL_F2C)(dspaces_client_t *client, const char *name, uint32_t *version, uint32_t *size, uint32_t *ndim, uint64_t *lb, uint64_t *ub, float *data, int *ierr)
+{
+    *ierr = dspaces_put_local(*client, name, *version, *size, *ndim, lb, ub, data);
+}
+
 #if defined(__cplusplus)
 }
 #endif

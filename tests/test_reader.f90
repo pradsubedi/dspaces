@@ -11,8 +11,8 @@ use dspaces
     
     call dspaces_init(rank, ndscl, ierr)
     lb(1) = 0
-    lb(2) = 9
-    ub(1) = 0
+    lb(2) = 0
+    ub(1) = 9
     ub(2) = 9
     call dspaces_get(ndscl, "md0", 0_4, lb, ub, data, -1, ierr)
     do i = 1, 10

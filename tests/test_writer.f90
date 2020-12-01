@@ -15,8 +15,8 @@ use dspaces
         end do
     end do
     lb(1) = 0
-    lb(2) = 9
-    ub(1) = 0
+    lb(2) = 0
+    ub(1) = 9
     ub(2) = 9
     call dspaces_put_local(ndscl, "md0", 0_4, lb, ub, data, ierr)
     call dspaces_kill(ndscl)

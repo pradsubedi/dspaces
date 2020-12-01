@@ -13,6 +13,9 @@ target_link_libraries(terminator dspaces)
 add_executable(test_writer_f test_writer.f90)
 target_link_libraries(test_writer_f dspaces_fortran)
 
+add_executable(test_reader_f test_reader.f90)
+target_link_libraries(test_reader_f dspaces_fortran)
+
 configure_file(
   ${PROJECT_SOURCE_DIR}/tests/test_script.sh.in
   ${PROJECT_BINARY_DIR}/tests/test_script.sh

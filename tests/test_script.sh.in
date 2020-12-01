@@ -58,7 +58,9 @@ elif [ $1 -eq 5 ]; then
 elif [ $1 -eq 6 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 dspaces_server sockets &
         serverproc=$!
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer_f
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 terminator
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer_f &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_reader_f
+        wait $writerproc
         wait $serverproc
 fi

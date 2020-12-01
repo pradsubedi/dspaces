@@ -8,10 +8,10 @@ use dspaces
     rank = 0
 
     call dspaces_init(rank, ndscl, ierr)
+    call dspaces_get(ndscl, "md0", 0_4, 0_8, 9_8, data, -1, ierr)
     do i = 1, 10
-        data(i) = i
+        print*,data(i)
     end do
-    call dspaces_put(ndscl, "md0", 0_4, 0_8, 9_8, data, ierr)
     call dspaces_kill(ndscl)
     call dspaces_fini(ndscl, ierr)
 end program test_writer_f

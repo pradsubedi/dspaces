@@ -23,9 +23,7 @@ int main(int argc, char **argv)
 
     dspaces_init(rank, &ds);
 
-    if(rank == 0) {
-        dspaces_kill(ds);
-    }
+    dspaces_kill(ds);
 
     dspaces_fini(ds);            
 

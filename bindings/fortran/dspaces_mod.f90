@@ -336,6 +336,39 @@ contains
         call dspaces_get_f2c(client%client, name, version, 8_4, 5_4, lb, ub, data, timeout, ierr)
     end subroutine
 
+    subroutine dspaces_put_1d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), intent(in) :: lb, ub
+        integer(kind=4), dimension(:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 1_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_1d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), intent(in) :: lb, ub
+        integer(kind=8), dimension(:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 1_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_1d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), intent(in) :: lb, ub
+        real(kind=4), dimension(:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 1_4, lb, ub, data, ierr)
+    end subroutine
+
     subroutine dspaces_put_1d_r8( client, name, version, lb, ub, data, ierr)
         type(dspaces_client), intent(in) :: client
         character*(*), intent(in) :: name
@@ -347,12 +380,210 @@ contains
         call dspaces_put_f2c( client%client, name, version, 8_4, 1_4, lb, ub, data, ierr)
     end subroutine
 
+    subroutine dspaces_put_2d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_2d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_2d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_2d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_3d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_3d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_3d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_3d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_4d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_4d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_4d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_4d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_5d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_5d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_5d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 4_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_5d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_f2c( client%client, name, version, 8_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
     subroutine dspaces_put_local_1d_i4( client, name, version, lb, ub, data, ierr)
         type(dspaces_client), intent(in) :: client
         character*(*), intent(in) :: name
         integer(kind=4), intent(in) :: version
         integer(kind=8), intent(in) :: lb, ub
         integer(kind=4), dimension(:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 1_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_1d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), intent(in) :: lb, ub
+        integer(kind=8), dimension(:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 1_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_1d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), intent(in) :: lb, ub
+        real(kind=4), dimension(:), intent(out) :: data
         integer, intent(out) :: ierr
 
         call dspaces_put_local_f2c( client%client, name, version, 4_4, 1_4, lb, ub, data, ierr)
@@ -367,6 +598,182 @@ contains
         integer, intent(out) :: ierr
 
         call dspaces_put_local_f2c( client%client, name, version, 8_4, 1_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_2d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_2d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_2d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_2d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(2), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 2_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_3d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_3d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_3d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_3d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(3), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 3_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_4d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_4d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_4d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_4d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(4), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 4_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_5d_i4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        integer(kind=4), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_5d_i8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        integer(kind=8), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_5d_r4( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        real(kind=4), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 4_4, 5_4, lb, ub, data, ierr)
+    end subroutine
+
+    subroutine dspaces_put_local_5d_r8( client, name, version, lb, ub, data, ierr)
+        type(dspaces_client), intent(in) :: client
+        character*(*), intent(in) :: name
+        integer(kind=4), intent(in) :: version
+        integer(kind=8), dimension(5), intent(in) :: lb, ub
+        real(kind=8), dimension(:,:,:,:,:), intent(out) :: data
+        integer, intent(out) :: ierr
+
+        call dspaces_put_local_f2c( client%client, name, version, 8_4, 5_4, lb, ub, data, ierr)
     end subroutine
 
 end module dspaces

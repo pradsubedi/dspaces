@@ -5,9 +5,9 @@
 extern "C" {
 #endif
 
-void FC_GLOBAL(dspaces_init_f2c, DSPACES_INIT_F2C)(const int rank, dspaces_client_t *client, int *ierr)
+void FC_GLOBAL(dspaces_init_f2c, DSPACES_INIT_F2C)(int *rank, dspaces_client_t *client, int *ierr)
 {
-    *ierr = dspaces_init(rank, client);
+    *ierr = dspaces_init(*rank, client);
 }
 
 void FC_GLOBAL(dspaces_fini_f2c, DSPACES_FINI_F2C)(dspaces_client_t *client, int *ierr)

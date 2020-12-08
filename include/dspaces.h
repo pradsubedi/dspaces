@@ -155,6 +155,64 @@ int dspaces_get (dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub, 
         void *data, int timeout);
 
+struct dspaces_req {
+    char *var_name;
+    int ver;
+    int size;
+    int ndim;
+    uint64_t *lb, *ub;
+    void *buf;
+};
+
+typedef int (*dspaces_sub_fn)(dspaces_client_t, struct dspaces_req *, void *);
+typedef struct dspaces_sub_handle *dspaces_sub_t;
+#define DSPACES_SUB_FAIL NULL
+
+#define DSPACES_SUB_DONE 0
+#define DSPACES_SUB_WAIT 1
+#define DSPACES_SUB_ERR 2
+#define DSPACES_SUB_INVALID 3
+
+/**
+ * @brief subscribe to data objects with callback
+ *
+ * A client can subscribe to a data object. When the object is received, the
+ * callback function will be run on the data object with the passed argument.
+ *
+ * @param[in] client dspaces client
+ * @param[in] var_name:     Name of the variable.
+ * @param[in] ver:      Version of the variable.
+ * @param[in] size:     Size (in bytes) for each element of the global array.
+ * @param[in] ndim:     the number of dimensions for the local bounding box.
+ * @param[in] lb:       coordinates for the lower corner of the local
+ *                  bounding box.
+ * @param[in] ub:       coordinates for the upper corner of the local
+ *                  bounding box.
+ * @param[in] sub_cb: function ro run on subscribed data.
+ * @param[in] arg: user argument to pass to sub_cb when run.
+ *
+ * @return subscription handle, DSPACES_SUB_FAIL on failure.
+ */
+dspaces_sub_t dspaces_sub(dspaces_client_t client,
+        const char *var_name,
+        unsigned int ver, int size,
+        int ndim, uint64_t *lb, uint64_t *ub,
+        dspaces_sub_fn sub_cb, void *arg);
+/**
+ * @brief check data subscription status
+ * 
+ * Check the status of a subscription handle returned by a previous data
+ * subscription.
+ *
+ * @param[in] client: dspaces client.
+ * @param[in] subh: the subscription handle to check.
+ * @param[out] results: the return value of the user callback, if the
+ *    subscription has fired.
+ *
+ * @return subscription status
+ */
+int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int *result);
+
 /**
  * @brief send signal to kill server group.
  *

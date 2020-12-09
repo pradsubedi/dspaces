@@ -51,6 +51,8 @@ struct dspaces_provider{
     hg_id_t ss_id;
     hg_id_t drain_id;
     hg_id_t kill_id;
+    hg_id_t sub_id;
+    hg_id_t notify_id;
     struct ds_gspace *dsg; 
     char **server_address;  
     char *listen_addr_str;
@@ -82,6 +84,7 @@ DECLARE_MARGO_RPC_HANDLER(obj_update_rpc);
 DECLARE_MARGO_RPC_HANDLER(odsc_internal_rpc);
 DECLARE_MARGO_RPC_HANDLER(ss_rpc);
 DECLARE_MARGO_RPC_HANDLER(kill_rpc);
+DECLARE_MARGO_RPC_HANDLER(sub_rpc);
 
 static void put_rpc(hg_handle_t h);
 static void put_local_rpc(hg_handle_t h);
@@ -91,6 +94,7 @@ static void obj_update_rpc(hg_handle_t h);
 static void odsc_internal_rpc(hg_handle_t h);
 static void ss_rpc(hg_handle_t h);
 static void kill_rpc(hg_handle_t h);
+static void sub_rpc(hg_handle_t h);
 //static void write_lock_rpc(hg_handle_t h);
 //static void read_lock_rpc(hg_handle_t h);
 
@@ -690,6 +694,7 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         margo_registered_name(server->mid, "ss_rpc",            &server->ss_id,             &flag);
         margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,          &flag);
         margo_registered_name(server->mid, "kill_rpc",          &server->kill_id,           &flag);
+        margo_registered_name(server->mid, "sub_rpc",           &server->sub_id,            &flag);
     } else {
         server->put_id =
             MARGO_REGISTER(server->mid, "put_rpc", bulk_gdim_t, bulk_out_t, put_rpc);
@@ -718,8 +723,11 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         server->kill_id =
             MARGO_REGISTER(server->mid, "kill_rpc", int32_t, void, kill_rpc);
         margo_registered_disable_response(server->mid, server->kill_id, HG_TRUE);
-        margo_register_data(server->mid, server->kill_id, (void*)server, NULL);
-        
+        margo_register_data(server->mid, server->kill_id, (void *)server, NULL);
+        server->sub_id =
+            MARGO_REGISTER(server->mid, "sub_rpc", odsc_gdim_t, void, sub_rpc);
+        margo_register_data(server->mid, server->sub_id, (void *)server, NULL);
+        margo_registered_disable_response(server->mid, server->sub_id, HG_TRUE);
     }
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
@@ -1382,6 +1390,31 @@ static void kill_rpc(hg_handle_t handle)
     }
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)
+
+static void sub_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);    
+    odsc_gdim_t in;
+    int32_t sub_id;
+    hg_return_t hret;
+    obj_descriptor in_odsc;
+    char *obj_str;
+    struct global_dimension in_gdim;
+
+    hret = margo_get_input(handle, &in);
+
+    memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
+    memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
+    sub_id = in.param;
+
+    obj_str = obj_desc_sprint(&in_odsc);
+    DEBUG_OUT("received subscription for %s with id %d\n", obj_str, sub_id);
+
+    margo_destroy(handle);
+}
+DEFINE_MARGO_RPC_HANDLER(sub_rpc)
 
 void dspaces_server_fini(dspaces_provider_t server)
 {

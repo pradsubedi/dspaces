@@ -158,13 +158,13 @@ int dspaces_get (dspaces_client_t client,
 struct dspaces_req {
     char *var_name;
     int ver;
-    int size;
+    int elem_size;
     int ndim;
     uint64_t *lb, *ub;
     void *buf;
 };
 
-typedef int (*dspaces_sub_fn)(dspaces_client_t, struct dspaces_req *, void *);
+typedef int (*dspaces_sub_fn)(dspaces_client_t, struct dspaces_req *, void *, void *);
 typedef struct dspaces_sub_handle *dspaces_sub_t;
 #define DSPACES_SUB_FAIL NULL
 
@@ -195,7 +195,7 @@ typedef struct dspaces_sub_handle *dspaces_sub_t;
  */
 dspaces_sub_t dspaces_sub(dspaces_client_t client,
         const char *var_name,
-        unsigned int ver, int size,
+        unsigned int ver, int elem_size,
         int ndim, uint64_t *lb, uint64_t *ub,
         dspaces_sub_fn sub_cb, void *arg);
 /**

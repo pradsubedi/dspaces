@@ -147,11 +147,11 @@ int main(int argc, char **argv)
 	MPI_Finalize();
 
     if(rank == 0) {
-        fprintf(stderr, "That's all from test_reader, folks!\n");
+        fprintf(stderr, "That's all from test_sub, folks!\n");
     }
 
 	return ret;	
 err_out:
-	fprintf(stderr, "test_reader rank %d has failed!\n", rank);
+	fprintf(stderr, "test_sub rank %d has failed!\n", rank);
 	return -1;	
 }

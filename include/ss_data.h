@@ -97,7 +97,6 @@ struct obj_desc_ptr_list {
 typedef struct{
         size_t size;
         char *raw_odsc;
-
 } odsc_hdr;
 
 typedef struct{
@@ -259,7 +258,7 @@ MERCURY_GEN_PROC(bulk_in_t,
         ((hg_bulk_t)(handle)))
 MERCURY_GEN_PROC(bulk_out_t, ((int32_t)(ret)))
 MERCURY_GEN_PROC(odsc_gdim_t, ((odsc_hdr_with_gdim)(odsc_gdim))((int32_t)(param)))
-MERCURY_GEN_PROC(odsc_list_t, ((odsc_hdr)(odsc_list)))
+MERCURY_GEN_PROC(odsc_list_t, ((odsc_hdr)(odsc_list))((int32_t)(param)));
 MERCURY_GEN_PROC(ss_information, ((odsc_hdr)(ss_buf)))
 
 char * obj_desc_sprint(obj_descriptor *);

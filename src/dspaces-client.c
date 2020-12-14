@@ -36,6 +36,7 @@ struct dspaces_sub_handle {
     int status;
     int id;
     dspaces_sub_fn cb;
+    obj_descriptor q_odsc;
 };
 
 struct sub_list_node {
@@ -66,11 +67,14 @@ struct dspaces_client {
 
     int sub_serial;
     struct sub_list_node *sub_lists[SUB_HASH_SIZE];
+    struct sub_list_node *done_list;
+    int pending_sub;
 
     ABT_mutex ls_mutex;
     ABT_mutex drain_mutex;
     ABT_mutex sub_mutex;
     ABT_cond drain_cond;
+    ABT_cond sub_cond;
 
     ABT_xstream listener_xs;
 };
@@ -326,11 +330,14 @@ int dspaces_init(int rank, dspaces_client_t* c)
     ABT_mutex_create(&client->drain_mutex);
     ABT_mutex_create(&client->sub_mutex);
     ABT_cond_create(&client->drain_cond);
+    ABT_cond_create(&client->sub_cond);
 
     for(i = 0; i < SUB_HASH_SIZE; i++) {
         client->sub_lists[i] = NULL;
     }
+    client->done_list = NULL;
     client->sub_serial = 0;
+    client->pending_sub = 0;
 
     /* check if RPCs have already been registered */
     hg_bool_t flag;
@@ -389,10 +396,30 @@ int dspaces_init(int rank, dspaces_client_t* c)
     return dspaces_SUCCESS;
 }
 
+static void free_done_list(dspaces_client_t client)
+{
+    struct sub_list_node *node;
+
+    while(client->done_list) {
+        node = client->done_list;
+        client->done_list = node->next;
+        free(node->subh);
+        free(node);
+    }
+}
 
 int dspaces_fini(dspaces_client_t client)
 {
     DEBUG_OUT("finalizing.\n");
+
+    ABT_mutex_lock(client->sub_mutex);
+    while(client->pending_sub > 0) {
+        DEBUG_OUT("Pending subscriptions: %d\n", client->pending_sub);
+        ABT_cond_wait(client->sub_cond, client->sub_mutex);
+    }
+    ABT_mutex_unlock(client->sub_mutex);
+
+    free_done_list(client);
 
     do { // watch out for spurious wake
         ABT_mutex_lock(client->drain_mutex);
@@ -939,9 +966,123 @@ static void drain_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(drain_rpc)
 
+struct dspaces_sub_handle *dspaces_get_sub(dspaces_client_t client, int sub_id)
+{
+    int listidx = sub_id % SUB_HASH_SIZE;
+    struct sub_list_node *node, **nodep;
+
+    node = client->sub_lists[listidx];
+    while(node) {
+        if(node->id == sub_id) {
+            return(node->subh);
+        }
+    }
+
+    fprintf(stderr, "WARNING: received notification for unknown subscription id %d. This shouldn't happen.\n", sub_id);
+    return(NULL);
+}
+
+static void dspaces_move_sub(dspaces_client_t client, int sub_id)
+{
+    int listidx = sub_id % SUB_HASH_SIZE;
+    struct sub_list_node *node, **nodep;
+    struct dspaces_sub_handle *subh;
+
+    nodep = &client->sub_lists[listidx];
+    while(*nodep && (*nodep)->id != sub_id) {
+        nodep = &((*nodep)->next);
+    }
+
+    if(!*nodep) {
+        fprintf(stderr, "WARNING: trying to mark unknown sub %d done. This shouldn't happen.\n", sub_id);
+        return;
+    }
+
+    node = *nodep;
+    *nodep = node->next;
+    node->next = client->done_list;
+    client->done_list = node;
+}
+
+static void free_sub_req(struct dspaces_req *req)
+{
+    if(!req) {
+        return;
+    }
+
+    free(req->var_name);
+    free(req->lb);
+    free(req->ub);
+    free(req);
+}
+
 static void notify_rpc(hg_handle_t handle)
 {
-	margo_destroy(handle);	
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_client_t client = (dspaces_client_t)margo_registered_data(mid, info->id);
+    odsc_list_t in;
+    struct dspaces_sub_handle *subh;
+    int sub_id;
+    int num_odscs;
+    obj_descriptor *odsc_tab;
+    void *data;
+    size_t data_size;
+    int i;
+
+    margo_get_input(handle, &in);
+    sub_id = in.param;
+
+    DEBUG_OUT("Received notification for sub %d\n", sub_id);
+    ABT_mutex_lock(client->sub_mutex);
+    subh = dspaces_get_sub(client, sub_id);
+    ABT_mutex_unlock(client->sub_mutex);
+
+    num_odscs = (in.odsc_list.size)/sizeof(obj_descriptor);
+    odsc_tab = malloc(in.odsc_list.size);
+    memcpy(odsc_tab, in.odsc_list.raw_odsc, in.odsc_list.size);
+    margo_free_input(handle, &in); 
+    margo_destroy(handle);
+
+    DEBUG_OUT("Satisfying subscription requires fetching %d objects:\n", num_odscs);
+    for(i = 0; i < num_odscs; i++) {
+        DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i]));
+    }
+
+    data_size = subh->q_odsc.size;
+    for(i = 0; i < subh->q_odsc.bb.num_dims; i++) {
+        data_size *= (subh->q_odsc.bb.ub.c[i] - subh->q_odsc.bb.lb.c[i]) + 1;
+    }
+    data = malloc(data_size);
+
+    if(num_odscs) {
+        get_data(client, num_odscs, subh->q_odsc, odsc_tab, data);
+    }
+
+    ABT_mutex_lock(client->sub_mutex);
+    if(subh->status == DSPACES_SUB_WAIT) {
+        subh->req->buf = data;
+        subh->status = DSPACES_SUB_RUNNING;
+    } else {
+        // subscription was cancelled
+        free(data);
+        data = NULL;
+    }
+    ABT_mutex_unlock(client->sub_mutex);
+
+    if(data) {
+        subh->result = subh->cb(client, subh->req, subh->arg);
+    }    
+
+    ABT_mutex_lock(client->sub_mutex);
+    client->pending_sub--;
+    dspaces_move_sub(client, sub_id);
+    subh->status = DSPACES_SUB_DONE;
+    ABT_cond_signal(client->sub_cond);
+    ABT_mutex_unlock(client->sub_mutex);
+
+    free(odsc_tab);
+    free_sub_req(subh->req);
 }
 DEFINE_MARGO_RPC_HANDLER(notify_rpc)
 
@@ -966,17 +1107,13 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
         int ndim, uint64_t *lb, uint64_t *ub,
         dspaces_sub_fn sub_cb, void *arg)
 {
-    hg_addr_t server_addr;
+    hg_addr_t my_addr, server_addr;
     hg_handle_t handle;
     hg_return_t hret;
     struct dspaces_sub_handle *subh;
-    obj_descriptor odsc = {
-        .version = ver, .owner = {0},
-        .st = st, .size = elem_size,
-        .bb = {.num_dims = ndim,}
-    };
 	odsc_gdim_t in;
     struct global_dimension od_gdim;
+    size_t owner_addr_size = 128;
     int ret;
 
 	ret = dspaces_init_listener(client);
@@ -996,26 +1133,37 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
     memcpy(subh->req->lb, lb, ndim * sizeof(*lb));
     memcpy(subh->req->ub, ub, ndim * sizeof(*ub));
 
+    subh->q_odsc.version = ver;
+    subh->q_odsc.st = st;
+    subh->q_odsc.size = elem_size;
+    subh->q_odsc.bb.num_dims = ndim;
+
     subh->arg = arg;
     subh->cb = sub_cb;
     
     ABT_mutex_lock(client->sub_mutex);
+    client->pending_sub++;
     subh->id = client->sub_serial++;
     register_client_sub(client, subh);
     ABT_mutex_unlock(client->sub_mutex);
 
-    
-    memset(odsc.bb.lb.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
-    memset(odsc.bb.ub.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
-    memcpy(odsc.bb.lb.c, lb, sizeof(uint64_t)*ndim);
-    memcpy(odsc.bb.ub.c, ub, sizeof(uint64_t)*ndim);
-    strncpy(odsc.name, var_name, strlen(var_name) + 1);
-    
-    in.odsc_gdim.size = sizeof(odsc);
-    in.odsc_gdim.raw_odsc = (char *)(&odsc);
+
+    memset(subh->q_odsc.bb.lb.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
+    memset(subh->q_odsc.bb.ub.c, 0, sizeof(uint64_t)*BBOX_MAX_NDIM);
+    memcpy(subh->q_odsc.bb.lb.c, lb, sizeof(uint64_t)*ndim);
+    memcpy(subh->q_odsc.bb.ub.c, ub, sizeof(uint64_t)*ndim);
+    strncpy(subh->q_odsc.name, var_name, strlen(var_name) + 1);
+
+    // A hack to send our address to the server without using more space. This field is ignored in a normal query. 
+    margo_addr_self(client->mid, &my_addr);
+    margo_addr_to_string(client->mid, subh->q_odsc.owner, &owner_addr_size, my_addr);
+    margo_addr_free(client->mid, my_addr);
+
+    in.odsc_gdim.size = sizeof(subh->q_odsc);
+    in.odsc_gdim.raw_odsc = (char *)(&subh->q_odsc);
     in.param = subh->id;
    
-    DEBUG_OUT("registered data subscription for %s with id %d\n", obj_desc_sprint(&odsc), subh->id);
+    DEBUG_OUT("registered data subscription for %s with id %d\n", obj_desc_sprint(&subh->q_odsc), subh->id);
  
     set_global_dimension(&(client->dcg->gdim_list), var_name, &(client->dcg->default_gdim), &od_gdim);
     in.odsc_gdim.gdim_size = sizeof(struct global_dimension);
@@ -1029,11 +1177,28 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
     assert(hret == HG_SUCCESS && "margo_forward succeeds");
 
     DEBUG_OUT("subscription %d sent.\n", subh->id); 
+    subh->status = DSPACES_SUB_WAIT;
 }
 
-int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int *result)
+int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait, int *result)
 {
-    
+    if(subh == DSPACES_SUB_FAIL) {
+        return DSPACES_SUB_INVALID;
+    }
+
+    if(wait) {
+        ABT_mutex_lock(client->sub_mutex);
+        while(subh->status == DSPACES_SUB_WAIT || subh->status == DSPACES_SUB_RUNNING) {
+            ABT_cond_wait(client->sub_cond, client->sub_mutex);
+        }    
+        ABT_mutex_unlock(client->sub_mutex);
+    }
+
+    if(subh->status == DSPACES_SUB_DONE) {
+        *result = subh->result;
+    }
+
+    return(subh->status);
 }
 
 static void kill_rpc(hg_handle_t handle)
@@ -1052,6 +1217,20 @@ static void kill_rpc(hg_handle_t handle)
     margo_destroy(handle);
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)
+
+int dspaces_cancel_sub(dspaces_client_t client, dspaces_sub_t subh)
+{
+    if(subh == DSPACES_SUB_FAIL) {
+        return(DSPACES_SUB_INVALID);
+    }
+    ABT_mutex_lock(client->sub_mutex);
+    if(subh->status == DSPACES_SUB_WAIT) {
+        subh->status = DSPACES_SUB_CANCELLED;
+    }
+    ABT_mutex_unlock(client->sub_mutex); 
+
+    return(0);
+}
 
 void dspaces_kill(dspaces_client_t client)
 {

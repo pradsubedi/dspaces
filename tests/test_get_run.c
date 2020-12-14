@@ -91,7 +91,9 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
 {
 	double **data_tab = (double **)malloc(sizeof(double*) * num_vars);
 	char var_name[128];
-	int i;
+	int ret = 0;
+    int err = 0;
+    int i;
 	for(i = 0; i < num_vars; i++){
 		data_tab[i] = NULL;
 	}	
@@ -123,14 +125,12 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
 
 	MPI_Barrier(gcomm_);
     tm_st = timer_read(&timer_);
-    int ret;
-    int err = 0;
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
 		err = dspaces_get(client, var_name, ts, elem_size, dims, lb, ub,
 			data_tab[i], -1);
-		if(err!=0){
+		if(err != 0){
 			fprintf(stderr, "dspaces_get() returned error %d\n", err);
 			return err;
 		}
@@ -191,6 +191,10 @@ int test_get_run(int ndims, int* npdim,
     MPI_Comm_size(gcomm_, &nproc_);
 
     ret = dspaces_init(rank_, &ndcl);
+    if(ret != dspaces_SUCCESS) {
+        fprintf(stderr, "dspaces_init() failed with %d.\n", ret);
+        goto error;
+    }
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -198,7 +202,7 @@ int test_get_run(int ndims, int* npdim,
 	unsigned int ts;
 	for(ts = 1; ts <= timesteps_; ts++){
 		err = couple_read_nd(ndcl, ts, num_vars, ndims);
-		if(err != 0){
+		if(err != 0) {
 			ret = -1;
 		}
 

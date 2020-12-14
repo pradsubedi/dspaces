@@ -695,6 +695,7 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,          &flag);
         margo_registered_name(server->mid, "kill_rpc",          &server->kill_id,           &flag);
         margo_registered_name(server->mid, "sub_rpc",           &server->sub_id,            &flag);
+        margo_registered_name(server->mid, "notify_rpc",        &server->notify_id, &flag);
     } else {
         server->put_id =
             MARGO_REGISTER(server->mid, "put_rpc", bulk_gdim_t, bulk_out_t, put_rpc);
@@ -728,6 +729,9 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
             MARGO_REGISTER(server->mid, "sub_rpc", odsc_gdim_t, void, sub_rpc);
         margo_register_data(server->mid, server->sub_id, (void *)server, NULL);
         margo_registered_disable_response(server->mid, server->sub_id, HG_TRUE);
+        server->notify_id =
+            MARGO_REGISTER(server->mid, "notify_rpc", odsc_list_t, void, NULL);
+            margo_registered_disable_response(server->mid, server->notify_id, HG_TRUE);
     }
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
@@ -1074,6 +1078,9 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query, int ti
     odsc_curr = *results = malloc(sizeof(**results) * total_odscs);
 
     for(i = 0; i < peer_num; i++) {
+        if(odsc_nums[i] == 0) {
+            continue;
+        }
         memcpy(odsc_curr, odsc_tabs[i], sizeof(*odsc_curr) * odsc_nums[i]);
         odsc_curr += odsc_nums[i];
         free(odsc_tabs[i]);
@@ -1089,7 +1096,7 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query, int ti
     free(odsc_tabs);
     free(odsc_nums);
 
-    return(total_odscs);
+    return(sizeof(obj_descriptor) * total_odscs);
 }
 
 static void query_rpc(hg_handle_t handle)
@@ -1117,7 +1124,7 @@ static void query_rpc(hg_handle_t handle)
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
     memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
     timeout = in.param;
-    DEBUG_OUT("Received query for %s\n",  obj_desc_sprint(&in_odsc));
+    DEBUG_OUT("Received query for %s with timeout %d",  obj_desc_sprint(&in_odsc), timeout);
 
     out.odsc_list.size = get_query_odscs(server, &in, timeout, &results);
 
@@ -1409,12 +1416,16 @@ static void sub_rpc(hg_handle_t handle)
 {
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     const struct hg_info* info = margo_get_info(handle);
-    dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);    
+    dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    odsc_list_t notice; 
     odsc_gdim_t in;
     int32_t sub_id;
     hg_return_t hret;
     obj_descriptor in_odsc;
+    obj_descriptor *results;
     struct global_dimension in_gdim;
+    hg_addr_t client_addr;
+    hg_handle_t notifyh;
 
     hret = margo_get_input(handle, &in);
 
@@ -1422,11 +1433,23 @@ static void sub_rpc(hg_handle_t handle)
     memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
     sub_id = in.param;
 
-    DEBUG_OUT("received subscription for %s with id %d\n", obj_desc_sprint(&in_odsc), sub_id);
+    DEBUG_OUT("received subscription for %s with id %d from %s\n", obj_desc_sprint(&in_odsc), sub_id, in_odsc.owner);
 
-    
+    in.param = -1;   // this will be interpreted as timeout by any interal queries
+    notice.odsc_list.size = get_query_odscs(server, &in, -1, &results);
+    notice.odsc_list.raw_odsc = (char *)results;
+    notice.param = sub_id;
 
+    margo_addr_lookup(server->mid, in_odsc.owner, &client_addr);
+    margo_create(server->mid, client_addr, server->notify_id, &notifyh);
+    margo_forward(notifyh, &notice);
+    margo_addr_free(server->mid, client_addr);
+    margo_destroy(notifyh);
+
+    margo_free_input(handle, &in);
     margo_destroy(handle);
+
+    free(results);
 }
 DEFINE_MARGO_RPC_HANDLER(sub_rpc)
 

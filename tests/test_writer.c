@@ -127,7 +127,7 @@ int main(int argc, char **argv)
 
 	if (parse_args(argc, argv, &dims, np, sp,
     		&timestep, &elem_size, &num_vars, &local_mode, &terminate) != 0) {
-		goto err_out;
+		return(-1);
 	}
 
     npapp = 1;

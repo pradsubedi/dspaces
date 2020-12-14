@@ -164,20 +164,25 @@ struct dspaces_req {
     void *buf;
 };
 
-typedef int (*dspaces_sub_fn)(dspaces_client_t, struct dspaces_req *, void *, void *);
+typedef int (*dspaces_sub_fn)(dspaces_client_t, struct dspaces_req *, void *);
 typedef struct dspaces_sub_handle *dspaces_sub_t;
 #define DSPACES_SUB_FAIL NULL
 
 #define DSPACES_SUB_DONE 0
 #define DSPACES_SUB_WAIT 1
 #define DSPACES_SUB_ERR 2
-#define DSPACES_SUB_INVALID 3
+#define DSPACES_SUB_RUNNING 3
+#define DSPACES_SUB_INVALID 4
+#define DSPACES_SUB_CANCELLED 5
 
 /**
  * @brief subscribe to data objects with callback
  *
  * A client can subscribe to a data object. When the object is received, the
  * callback function will be run on the data object with the passed argument.
+ * sub_cb receives the request, a data buffer, and the user-suppied argument.
+ * Aftr sub_cb is run, the request structure is free'd. The user should free
+ * the data buffer.
  *
  * @param[in] client dspaces client
  * @param[in] var_name:     Name of the variable.
@@ -188,7 +193,7 @@ typedef struct dspaces_sub_handle *dspaces_sub_t;
  *                  bounding box.
  * @param[in] ub:       coordinates for the upper corner of the local
  *                  bounding box.
- * @param[in] sub_cb: function ro run on subscribed data.
+ * @param[in] sub_cb: function to run on subscribed data.
  * @param[in] arg: user argument to pass to sub_cb when run.
  *
  * @return subscription handle, DSPACES_SUB_FAIL on failure.
@@ -206,12 +211,26 @@ dspaces_sub_t dspaces_sub(dspaces_client_t client,
  *
  * @param[in] client: dspaces client.
  * @param[in] subh: the subscription handle to check.
+ * @param[in] wait: wait for subscription to either complete or fail
  * @param[out] results: the return value of the user callback, if the
  *    subscription has fired.
  *
  * @return subscription status
  */
-int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int *result);
+int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait, int *result);
+
+/**
+ * @brief cancels pending subscription
+ *
+ * Stops a pending subscription from being processed, ignoring any future notification 
+ * for this subscription.
+ *
+ * @param[in] client: dspaces client
+ * @param[in] subh: handle for the subscription to be cancelled.
+ *
+ * @return zero for success, for failure (probably invalid subh)
+ */
+int dspaces_cancel_sub(dspaces_client_t client, dspaces_sub_t subh);
 
 /**
  * @brief send signal to kill server group.

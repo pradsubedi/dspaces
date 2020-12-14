@@ -1149,11 +1149,14 @@ static void get_rpc(hg_handle_t handle)
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
 
+
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS); 
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
+
+    DEBUG_OUT("received get request\n");
      
     struct obj_data *od, *from_obj;
 
@@ -1379,7 +1382,7 @@ static void kill_rpc(hg_handle_t handle)
     child2 = child1 + 1;
 
     ABT_mutex_lock(server->kill_mutex);
-    DEBUG_OUT("Kill tokens remaining: %d\n", server->f_kill);
+    DEBUG_OUT("Kill tokens remaining: %d\n", server->f_kill?(server->f_kill-1):0);
     if(server->f_kill == 0) {
         //already shutting down
         ABT_mutex_unlock(server->kill_mutex);

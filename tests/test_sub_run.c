@@ -95,11 +95,12 @@ int check_data_cb(dspaces_client_t client, struct dspaces_req *req, void *rankv)
     int num_elem = 1;
     int i;
 
+    fprintf(stderr, "executing %s on rank %d for version %d.\n", __func__, rank, req->ver);
+
     for(i = 0; i < req->ndim; i++) {
         num_elem *= (req->ub[i] - req->lb[i]) + 1;
     }
 
-    // TODO: free data afterwards?
     return(check_data(req->var_name, req->buf, num_elem, rank, req->ver));
 
 }
@@ -133,11 +134,14 @@ static int couple_sub_nd(dspaces_client_t client, unsigned int ts, int num_vars,
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
-        *subh = dspaces_sub(client, var_name, ts, elem_size, dims, lb, ub, check_data_cb, &rank_);
-		if(*subh == DSPACES_SUB_FAIL) {
+        dspaces_sub_t tsubh;
+        tsubh = dspaces_sub(client, var_name, ts, elem_size, dims, lb, ub, check_data_cb, &rank_);
+		if(tsubh == DSPACES_SUB_FAIL) {
             fprintf(stderr, "dspaces_sub() failed.\n");
             return(-1);
         }
+        dspaces_check_sub(client, tsubh, 0, &err);
+        *subh = tsubh;
 	}
 	tm_end = timer_read(&timer_);
 		

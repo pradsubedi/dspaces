@@ -1028,6 +1028,7 @@ static void notify_rpc(hg_handle_t handle)
     obj_descriptor *odsc_tab;
     void *data;
     size_t data_size;
+    int is_cancelled = 0;
     int i;
 
     margo_get_input(handle, &in);
@@ -1036,34 +1037,41 @@ static void notify_rpc(hg_handle_t handle)
     DEBUG_OUT("Received notification for sub %d\n", sub_id);
     ABT_mutex_lock(client->sub_mutex);
     subh = dspaces_get_sub(client, sub_id);
-    ABT_mutex_unlock(client->sub_mutex);
+    if(subh->status == DSPACES_SUB_WAIT) {
+        ABT_mutex_unlock(client->sub_mutex);
 
-    num_odscs = (in.odsc_list.size)/sizeof(obj_descriptor);
-    odsc_tab = malloc(in.odsc_list.size);
-    memcpy(odsc_tab, in.odsc_list.raw_odsc, in.odsc_list.size);
-    margo_free_input(handle, &in); 
+        num_odscs = (in.odsc_list.size)/sizeof(obj_descriptor);
+        odsc_tab = malloc(in.odsc_list.size);
+        memcpy(odsc_tab, in.odsc_list.raw_odsc, in.odsc_list.size);
+
+        DEBUG_OUT("Satisfying subscription requires fetching %d objects:\n", num_odscs);
+        for(i = 0; i < num_odscs; i++) {
+            DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i]));
+        }
+
+        data_size = subh->q_odsc.size;
+        for(i = 0; i < subh->q_odsc.bb.num_dims; i++) {
+            data_size *= (subh->q_odsc.bb.ub.c[i] - subh->q_odsc.bb.lb.c[i]) + 1;
+        }
+        data = malloc(data_size);
+
+        if(num_odscs) {
+            get_data(client, num_odscs, subh->q_odsc, odsc_tab, data);
+        }
+    } else {
+        ABT_mutex_unlock(client->sub_mutex);
+        odsc_tab = NULL;
+        data = NULL;
+    }
+
+    margo_free_input(handle, &in);
     margo_destroy(handle);
-
-    DEBUG_OUT("Satisfying subscription requires fetching %d objects:\n", num_odscs);
-    for(i = 0; i < num_odscs; i++) {
-        DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tab[i]));
-    }
-
-    data_size = subh->q_odsc.size;
-    for(i = 0; i < subh->q_odsc.bb.num_dims; i++) {
-        data_size *= (subh->q_odsc.bb.ub.c[i] - subh->q_odsc.bb.lb.c[i]) + 1;
-    }
-    data = malloc(data_size);
-
-    if(num_odscs) {
-        get_data(client, num_odscs, subh->q_odsc, odsc_tab, data);
-    }
 
     ABT_mutex_lock(client->sub_mutex);
     if(subh->status == DSPACES_SUB_WAIT) {
         subh->req->buf = data;
         subh->status = DSPACES_SUB_RUNNING;
-    } else {
+    } else if(data) {
         // subscription was cancelled
         free(data);
         data = NULL;
@@ -1081,7 +1089,9 @@ static void notify_rpc(hg_handle_t handle)
     ABT_cond_signal(client->sub_cond);
     ABT_mutex_unlock(client->sub_mutex);
 
-    free(odsc_tab);
+    if(odsc_tab) {
+        free(odsc_tab);
+    }
     free_sub_req(subh->req);
 }
 DEFINE_MARGO_RPC_HANDLER(notify_rpc)
@@ -1183,10 +1193,14 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
 int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait, int *result)
 {
     if(subh == DSPACES_SUB_FAIL) {
+        fprintf(stderr, "WARNING: status check on invalid subscription handle.\n");
         return DSPACES_SUB_INVALID;
     }
 
+    DEBUG_OUT("checking status on subscription %d\n", subh->id);
+
     if(wait) {
+        DEBUG_OUT("blocking on notification for subscription %d.\n", subh->id);
         ABT_mutex_lock(client->sub_mutex);
         while(subh->status == DSPACES_SUB_WAIT || subh->status == DSPACES_SUB_RUNNING) {
             ABT_cond_wait(client->sub_cond, client->sub_mutex);

@@ -648,11 +648,12 @@ int dspaces_put_local (dspaces_client_t client,
     hg_return_t hret;
     int ret = dspaces_SUCCESS;
 
-
-	ret = dspaces_init_listener(client);
-	if(ret != dspaces_SUCCESS) {
-		return(ret);
-	}
+    if(client->listener_init == 0) {
+	    ret = dspaces_init_listener(client);
+	    if(ret != dspaces_SUCCESS) {
+		    return(ret);
+	    }
+    }
     
 	client->local_put_count++;
 
@@ -966,7 +967,7 @@ static void drain_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(drain_rpc)
 
-struct dspaces_sub_handle *dspaces_get_sub(dspaces_client_t client, int sub_id)
+static struct dspaces_sub_handle *dspaces_get_sub(dspaces_client_t client, int sub_id)
 {
     int listidx = sub_id % SUB_HASH_SIZE;
     struct sub_list_node *node, **nodep;
@@ -1126,9 +1127,11 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
     size_t owner_addr_size = 128;
     int ret;
 
-	ret = dspaces_init_listener(client);
-    if(ret != dspaces_SUCCESS) {
-        return(DSPACES_SUB_FAIL);
+    if(client->listener_init == 0) {
+	    ret = dspaces_init_listener(client);
+        if(ret != dspaces_SUCCESS) {
+            return(DSPACES_SUB_FAIL);
+        }
     }
 
     subh = malloc(sizeof(*subh));

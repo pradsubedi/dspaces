@@ -1,0 +1,6 @@
+Language:  Cpp
+BasedOnStyle:  LLVM
+BreakBeforeBraces: Linux
+IndentWidth: 4
+ContinuationIndentWidth: 4
+SpaceBeforeParens: Never

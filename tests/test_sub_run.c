@@ -134,14 +134,11 @@ static int couple_sub_nd(dspaces_client_t client, unsigned int ts, int num_vars,
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
-        dspaces_sub_t tsubh;
-        tsubh = dspaces_sub(client, var_name, ts, elem_size, dims, lb, ub, check_data_cb, &rank_);
-		if(tsubh == DSPACES_SUB_FAIL) {
+        *subh = dspaces_sub(client, var_name, ts, elem_size, dims, lb, ub, check_data_cb, &rank_);
+		if(*subh == DSPACES_SUB_FAIL) {
             fprintf(stderr, "dspaces_sub() failed.\n");
             return(-1);
         }
-        dspaces_check_sub(client, tsubh, 0, &err);
-        *subh = tsubh;
 	}
 	tm_end = timer_read(&timer_);
 		

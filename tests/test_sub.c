@@ -146,6 +146,10 @@ int main(int argc, char **argv)
 	MPI_Barrier(gcomm);
 	MPI_Finalize();
 
+    if(ret) {
+        goto err_out;
+    }
+
     if(rank == 0) {
         fprintf(stderr, "That's all from test_sub, folks!\n");
     }

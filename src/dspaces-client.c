@@ -1188,6 +1188,8 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
 
     DEBUG_OUT("subscription %d sent.\n", subh->id); 
     subh->status = DSPACES_SUB_WAIT;
+
+    return(subh);
 }
 
 int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait, int *result)
@@ -1197,7 +1199,7 @@ int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait, int
         return DSPACES_SUB_INVALID;
     }
 
-    DEBUG_OUT("checking status on subscription %d\n", subh->id);
+    DEBUG_OUT("checking status of subscription %d\n", subh->id);
 
     if(wait) {
         DEBUG_OUT("blocking on notification for subscription %d.\n", subh->id);

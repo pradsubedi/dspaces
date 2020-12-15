@@ -186,6 +186,9 @@ int test_sub_run(int ndims, int* npdim,
     MPI_Comm_size(gcomm_, &nproc_);
 
     ret = dspaces_init(rank_, &ndcl);
+    if(ret != dspaces_SUCCESS) {
+        fprintf(stderr, "%s: dspaces_init() failed with %d.\n", __func__, ret);
+    }
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
@@ -195,7 +198,8 @@ int test_sub_run(int ndims, int* npdim,
 	unsigned int ts;
 	for(ts = 1; ts <= timesteps_; ts++) {
 		err = couple_sub_nd(ndcl, ts, num_vars, ndims, &sub_handles[ts-1]);
-		if(err != 0){
+		if(err != 0) {
+            fprintf(stderr, "couple_sub_nd failed on ts %d with %d.\n", ts, err);
 			ret = -1;
 		}
 	}
@@ -203,6 +207,7 @@ int test_sub_run(int ndims, int* npdim,
     for(ts = 1; ts <= timesteps_; ts++) {
         err = dspaces_check_sub(ndcl, sub_handles[ts-1], 1, &result);
         if((err != DSPACES_SUB_DONE) || result > 0) {
+            fprintf(stderr, "subscription tailed for ts %d with %d.\n", ts, err);
             ret = -1;
         }
     } 

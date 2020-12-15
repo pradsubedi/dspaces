@@ -110,27 +110,27 @@ static int couple_sub_nd(dspaces_client_t client, unsigned int ts, int num_vars,
 	double **data_tab = (double **)malloc(sizeof(double*) * num_vars);
 	char var_name[128];
 	int i;
+    int ret = 0;
+    int err = 0;
+    uint64_t dims_size = 1;
+    int elem_size = elem_size_;
+    uint64_t lb[10] = {0}, ub[10] = {0};
+    double tm_st, tm_end, tm_max, tm_diff;
+    int root = 0;
+
 	for(i = 0; i < num_vars; i++){
 		data_tab[i] = NULL;
 	}	
 
 	set_offset_nd(rank_, dims);
-	uint64_t dims_size = 1;
-	int elem_size = elem_size_;
-	uint64_t lb[10] = {0}, ub[10] = {0};
 	for(i = 0; i < dims; i++){
 		lb[i] = off[i];
 		ub[i] = off[i] + sp[i] - 1;
 		dims_size *= sp[i];
 	}
-	double tm_st, tm_end, tm_max, tm_diff;
-	int root = 0;
-
 
 	MPI_Barrier(gcomm_);
     tm_st = timer_read(&timer_);
-    int ret;
-    int err = 0;
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);

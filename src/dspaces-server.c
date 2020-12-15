@@ -51,6 +51,8 @@ struct dspaces_provider{
     hg_id_t ss_id;
     hg_id_t drain_id;
     hg_id_t kill_id;
+    hg_id_t sub_id;
+    hg_id_t notify_id;
     struct ds_gspace *dsg; 
     char **server_address;  
     char *listen_addr_str;
@@ -82,6 +84,7 @@ DECLARE_MARGO_RPC_HANDLER(obj_update_rpc);
 DECLARE_MARGO_RPC_HANDLER(odsc_internal_rpc);
 DECLARE_MARGO_RPC_HANDLER(ss_rpc);
 DECLARE_MARGO_RPC_HANDLER(kill_rpc);
+DECLARE_MARGO_RPC_HANDLER(sub_rpc);
 
 static void put_rpc(hg_handle_t h);
 static void put_local_rpc(hg_handle_t h);
@@ -91,6 +94,7 @@ static void obj_update_rpc(hg_handle_t h);
 static void odsc_internal_rpc(hg_handle_t h);
 static void ss_rpc(hg_handle_t h);
 static void kill_rpc(hg_handle_t h);
+static void sub_rpc(hg_handle_t h);
 //static void write_lock_rpc(hg_handle_t h);
 //static void read_lock_rpc(hg_handle_t h);
 
@@ -690,6 +694,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         margo_registered_name(server->mid, "ss_rpc",            &server->ss_id,             &flag);
         margo_registered_name(server->mid, "drain_rpc",         &server->drain_id,          &flag);
         margo_registered_name(server->mid, "kill_rpc",          &server->kill_id,           &flag);
+        margo_registered_name(server->mid, "sub_rpc",           &server->sub_id,            &flag);
+        margo_registered_name(server->mid, "notify_rpc",        &server->notify_id, &flag);
     } else {
         server->put_id =
             MARGO_REGISTER(server->mid, "put_rpc", bulk_gdim_t, bulk_out_t, put_rpc);
@@ -718,8 +724,14 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm, dspaces_provider_t
         server->kill_id =
             MARGO_REGISTER(server->mid, "kill_rpc", int32_t, void, kill_rpc);
         margo_registered_disable_response(server->mid, server->kill_id, HG_TRUE);
-        margo_register_data(server->mid, server->kill_id, (void*)server, NULL);
-        
+        margo_register_data(server->mid, server->kill_id, (void *)server, NULL);
+        server->sub_id =
+            MARGO_REGISTER(server->mid, "sub_rpc", odsc_gdim_t, void, sub_rpc);
+        margo_register_data(server->mid, server->sub_id, (void *)server, NULL);
+        margo_registered_disable_response(server->mid, server->sub_id, HG_TRUE);
+        server->notify_id =
+            MARGO_REGISTER(server->mid, "notify_rpc", odsc_list_t, void, NULL);
+            margo_registered_disable_response(server->mid, server->notify_id, HG_TRUE);
     }
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
@@ -969,16 +981,8 @@ static void put_local_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(put_local_rpc)
 
-static void query_rpc(hg_handle_t handle)
+static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query, int timeout, obj_descriptor **results)
 {
-    margo_instance_id mid;
-    const struct hg_info *info;
-    dspaces_provider_t server;
-    odsc_gdim_t in;
-    odsc_list_t out;
-    obj_descriptor in_odsc;
-    int timeout;
-    struct global_dimension in_gdim;
     struct sspace *ssd;
     struct dht_entry **de_tab;
     int peer_num;
@@ -986,34 +990,24 @@ static void query_rpc(hg_handle_t handle)
     int total_odscs = 0;
     int *odsc_nums;
     obj_descriptor **odsc_tabs, **podsc;
-    obj_descriptor *odsc_curr, *odsc_tab_all;
+    obj_descriptor *odsc_curr;
     margo_request *serv_reqs;
     hg_handle_t *hndls;
     hg_addr_t server_addr;
     odsc_list_t dht_resp;
+    obj_descriptor *q_odsc;
+    struct global_dimension *q_gdim;
     int i, j;
-    hg_return_t hret;
 
-    // unwrap context and input from margo
-    mid = margo_hg_handle_get_instance(handle);
-    info = margo_get_info(handle);
-    server = (dspaces_provider_t)margo_registered_data(mid, info->id);
-    hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
-
-    DEBUG_OUT("received query\n");
-
-    memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
-    memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
-    timeout = in.param;
-    DEBUG_OUT("Received query for %s\n",  obj_desc_sprint(&in_odsc));
+    q_odsc = (obj_descriptor *)query->odsc_gdim.raw_odsc;
+    q_gdim = (struct global_dimension *)query->odsc_gdim.raw_gdim;
 
     ABT_mutex_lock(server->sspace_mutex);
-    ssd = lookup_sspace(server->dsg, in_odsc.name, &in_gdim);
+    ssd = lookup_sspace(server->dsg, q_odsc->name, q_gdim);
     ABT_mutex_unlock(server->sspace_mutex);
 
     de_tab = malloc(sizeof(*de_tab) * ssd->dht->num_entries);
-    peer_num = ssd_hash(ssd, &(in_odsc.bb), de_tab);
+    peer_num = ssd_hash(ssd, &(q_odsc->bb), de_tab);
 
     DEBUG_OUT("%d peers to query\n", peer_num);
 
@@ -1033,13 +1027,13 @@ static void query_rpc(hg_handle_t handle)
         //remote servers
         margo_addr_lookup(server->mid, server->server_address[de_tab[i]->rank], &server_addr);
         margo_create(server->mid, server_addr, server->odsc_internal_id, &hndls[i]);
-        margo_iforward(hndls[i], &in, &serv_reqs[i]);
+        margo_iforward(hndls[i], query, &serv_reqs[i]);
         margo_addr_free(server->mid, server_addr);
     }
 
     if(self_id_num > -1) {
         podsc = malloc(sizeof(*podsc) * ssd->ent_self->odsc_num);
-        odsc_nums[self_id_num] = dht_find_entry_all(ssd->ent_self, &in_odsc, &podsc, timeout);
+        odsc_nums[self_id_num] = dht_find_entry_all(ssd->ent_self, q_odsc, &podsc, timeout);
         DEBUG_OUT("%d odscs found in %d\n", odsc_nums[self_id_num], server->dsg->rank);
         total_odscs += odsc_nums[self_id_num];
         if(odsc_nums[self_id_num]) {
@@ -1047,8 +1041,8 @@ static void query_rpc(hg_handle_t handle)
             for(i = 0; i < odsc_nums[self_id_num]; i++) {
                 obj_descriptor *odsc = &odsc_tabs[self_id_num][i]; //readability
                 *odsc = *podsc[i];
-                odsc->st = in_odsc.st;
-                bbox_intersect(&in_odsc.bb, &odsc->bb, &odsc->bb);
+                odsc->st = q_odsc->st;
+                bbox_intersect(&q_odsc->bb, &odsc->bb, &odsc->bb);
                 DEBUG_OUT("%s\n", obj_desc_sprint(&odsc_tabs[self_id_num][i]));
             }
         }
@@ -1081,30 +1075,65 @@ static void query_rpc(hg_handle_t handle)
         margo_destroy(hndls[i]);
     }
 
-    odsc_curr = odsc_tab_all = malloc(sizeof(*odsc_tab_all) * total_odscs);
+    odsc_curr = *results = malloc(sizeof(**results) * total_odscs);
 
     for(i = 0; i < peer_num; i++) {
+        if(odsc_nums[i] == 0) {
+            continue;
+        }
         memcpy(odsc_curr, odsc_tabs[i], sizeof(*odsc_curr) * odsc_nums[i]);
         odsc_curr += odsc_nums[i];
         free(odsc_tabs[i]);
     }
 
     for(i = 0; i < total_odscs; i++) {
-        DEBUG_OUT("odscs in response: %s\n", obj_desc_sprint(&odsc_tab_all[i]));
+        DEBUG_OUT("odscs in response: %s\n", obj_desc_sprint(&(*results)[i]));
     }
 
-    out.odsc_list.size = sizeof(*odsc_tab_all) * total_odscs;
-    out.odsc_list.raw_odsc = (char *)odsc_tab_all;
-    margo_respond(handle, &out);
-    margo_free_input(handle, &in);
-    margo_destroy(handle);
-
-    free(odsc_tab_all);
+    free(de_tab);
     free(hndls);
     free(serv_reqs);
     free(odsc_tabs);
     free(odsc_nums);
-    free(de_tab); 
+
+    return(sizeof(obj_descriptor) * total_odscs);
+}
+
+static void query_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid;
+    const struct hg_info *info;
+    dspaces_provider_t server;
+    odsc_gdim_t in;
+    odsc_list_t out;
+    obj_descriptor in_odsc;
+    struct global_dimension in_gdim;
+    int timeout;
+    obj_descriptor *results;
+    hg_return_t hret;
+
+    // unwrap context and input from margo
+    mid = margo_hg_handle_get_instance(handle);
+    info = margo_get_info(handle);
+    server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    hret = margo_get_input(handle, &in);
+    assert(hret == HG_SUCCESS);
+
+    DEBUG_OUT("received query\n");
+
+    memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
+    memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
+    timeout = in.param;
+    DEBUG_OUT("Received query for %s with timeout %d",  obj_desc_sprint(&in_odsc), timeout);
+
+    out.odsc_list.size = get_query_odscs(server, &in, timeout, &results);
+
+    out.odsc_list.raw_odsc = (char *)results;
+    margo_respond(handle, &out);
+    margo_free_input(handle, &in);
+    margo_destroy(handle);
+
+    free(results);
 }
 DEFINE_MARGO_RPC_HANDLER(query_rpc)
 
@@ -1120,11 +1149,14 @@ static void get_rpc(hg_handle_t handle)
     const struct hg_info* info = margo_get_info(handle);
     dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
 
+
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS); 
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
+
+    DEBUG_OUT("received get request\n");
      
     struct obj_data *od, *from_obj;
 
@@ -1350,7 +1382,7 @@ static void kill_rpc(hg_handle_t handle)
     child2 = child1 + 1;
 
     ABT_mutex_lock(server->kill_mutex);
-    DEBUG_OUT("Kill tokens remaining: %d\n", server->f_kill);
+    DEBUG_OUT("Kill tokens remaining: %d\n", server->f_kill?(server->f_kill-1):0);
     if(server->f_kill == 0) {
         //already shutting down
         ABT_mutex_unlock(server->kill_mutex);
@@ -1382,6 +1414,47 @@ static void kill_rpc(hg_handle_t handle)
     }
 }
 DEFINE_MARGO_RPC_HANDLER(kill_rpc)
+
+static void sub_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+    const struct hg_info* info = margo_get_info(handle);
+    dspaces_provider_t server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    odsc_list_t notice; 
+    odsc_gdim_t in;
+    int32_t sub_id;
+    hg_return_t hret;
+    obj_descriptor in_odsc;
+    obj_descriptor *results;
+    struct global_dimension in_gdim;
+    hg_addr_t client_addr;
+    hg_handle_t notifyh;
+
+    hret = margo_get_input(handle, &in);
+
+    memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
+    memcpy(&in_gdim, in.odsc_gdim.raw_gdim, sizeof(struct global_dimension));
+    sub_id = in.param;
+
+    DEBUG_OUT("received subscription for %s with id %d from %s\n", obj_desc_sprint(&in_odsc), sub_id, in_odsc.owner);
+
+    in.param = -1;   // this will be interpreted as timeout by any interal queries
+    notice.odsc_list.size = get_query_odscs(server, &in, -1, &results);
+    notice.odsc_list.raw_odsc = (char *)results;
+    notice.param = sub_id;
+
+    margo_addr_lookup(server->mid, in_odsc.owner, &client_addr);
+    margo_create(server->mid, client_addr, server->notify_id, &notifyh);
+    margo_forward(notifyh, &notice);
+    margo_addr_free(server->mid, client_addr);
+    margo_destroy(notifyh);
+
+    margo_free_input(handle, &in);
+    margo_destroy(handle);
+
+    free(results);
+}
+DEFINE_MARGO_RPC_HANDLER(sub_rpc)
 
 void dspaces_server_fini(dspaces_provider_t server)
 {

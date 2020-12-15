@@ -150,6 +150,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "That's all from test_reader, folks!\n");
     }
 
+    if(ret != 0) {
+        goto err_out;
+    }
+
 	return ret;	
 err_out:
 	fprintf(stderr, "test_reader rank %d has failed!\n", rank);

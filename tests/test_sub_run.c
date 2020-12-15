@@ -84,43 +84,49 @@ int check_data(const char *var_name, double *buf, int num_elem, int rank, int ts
                         __func__, var_name, rank, ts, cnt, num_elem);
         }
 
+        free(buf);
+
         return cnt;
 }
 
-static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars, int dims)
+int check_data_cb(dspaces_client_t client, struct dspaces_req *req, void *rankv)
+{
+    int rank = *(int *)rankv;
+    int num_elem = 1;
+    int i;
+
+    fprintf(stderr, "executing %s on rank %d for version %d.\n", __func__, rank, req->ver);
+
+    for(i = 0; i < req->ndim; i++) {
+        num_elem *= (req->ub[i] - req->lb[i]) + 1;
+    }
+
+    return(check_data(req->var_name, req->buf, num_elem, rank, req->ver));
+
+}
+
+static int couple_sub_nd(dspaces_client_t client, unsigned int ts, int num_vars, int dims, dspaces_sub_t *subh)
 {
 	double **data_tab = (double **)malloc(sizeof(double*) * num_vars);
 	char var_name[128];
-	int ret = 0;
+	int i;
+    int ret = 0;
     int err = 0;
-    int i;
+    uint64_t dims_size = 1;
+    int elem_size = elem_size_;
+    uint64_t lb[10] = {0}, ub[10] = {0};
+    double tm_st, tm_end, tm_max, tm_diff;
+    int root = 0;
+
 	for(i = 0; i < num_vars; i++){
 		data_tab[i] = NULL;
 	}	
 
 	set_offset_nd(rank_, dims);
-	uint64_t dims_size = 1;
-	int elem_size = elem_size_;
-	uint64_t lb[10] = {0}, ub[10] = {0};
 	for(i = 0; i < dims; i++){
 		lb[i] = off[i];
 		ub[i] = off[i] + sp[i] - 1;
 		dims_size *= sp[i];
-	}
-	double tm_st, tm_end, tm_max, tm_diff;
-	int root = 0;
-
-
-	//allocate data
-	double *data = NULL;
-	for(i = 0; i < num_vars; i++){
-		data = allocate_nd(dims);
-		if(data == NULL){
-			fprintf(stderr, "%s(): allocate_2d() failed.\n", __func__);
-            		return -1; // TODO: free buffers
-		}
-		memset(data, 0, elem_size_ * dims_size);
-		data_tab[i] = data;
 	}
 
 	MPI_Barrier(gcomm_);
@@ -128,13 +134,11 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
 
 	for(i = 0; i < num_vars; i++){
 		sprintf(var_name, "mnd_%d", i);
-		err = dspaces_get(client, var_name, ts, elem_size, dims, lb, ub,
-			data_tab[i], -1);
-		if(err != 0){
-			fprintf(stderr, "dspaces_get() returned error %d\n", err);
-			return err;
-		}
-		
+        *subh = dspaces_sub(client, var_name, ts, elem_size, dims, lb, ub, check_data_cb, &rank_);
+		if(*subh == DSPACES_SUB_FAIL) {
+            fprintf(stderr, "dspaces_sub() failed.\n");
+            return(-1);
+        }
 	}
 	tm_end = timer_read(&timer_);
 		
@@ -146,29 +150,20 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts, int num_vars
                 ts, tm_max);
     }
 
-	for (i = 0; i < num_vars; i++) {
-		sprintf(var_name, "mnd_%d", i);
-		err = check_data(var_name, data_tab[i],dims_size*elem_size_/sizeof(double),
-			rank_, ts);
-        if(err > 0) {
-             ret = -EIO;
-        }
-        if (data_tab[i]) {
-            free(data_tab[i]);
-        }
-    }
     free(data_tab);
 
     return ret;
 }
 
-int test_get_run(int ndims, int* npdim, 
+int test_sub_run(int ndims, int* npdim, 
 	uint64_t *spdim, int timestep, size_t elem_size, int num_vars, int terminate,
 	MPI_Comm gcomm)
 {
+    dspaces_sub_t *sub_handles;
 	gcomm_ = gcomm;
 	elem_size_ = elem_size;
 	timesteps_ = timestep;
+    int result;
 
 	dspaces_client_t ndcl = dspaces_CLIENT_NULL;
 
@@ -192,21 +187,30 @@ int test_get_run(int ndims, int* npdim,
 
     ret = dspaces_init(rank_, &ndcl);
     if(ret != dspaces_SUCCESS) {
-        fprintf(stderr, "dspaces_init() failed with %d.\n", ret);
-        goto error;
+        fprintf(stderr, "%s: dspaces_init() failed with %d.\n", __func__, ret);
     }
 
 	tm_end = timer_read(&timer_);
 	fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n", rank_, tm_end-tm_st);
 	
+    sub_handles = malloc(sizeof(*sub_handles) * timesteps_);
+
 	unsigned int ts;
-	for(ts = 1; ts <= timesteps_; ts++){
-		err = couple_read_nd(ndcl, ts, num_vars, ndims);
+	for(ts = 1; ts <= timesteps_; ts++) {
+		err = couple_sub_nd(ndcl, ts, num_vars, ndims, &sub_handles[ts-1]);
 		if(err != 0) {
+            fprintf(stderr, "couple_sub_nd failed on ts %d with %d.\n", ts, err);
 			ret = -1;
 		}
-
 	}
+
+    for(ts = 1; ts <= timesteps_; ts++) {
+        err = dspaces_check_sub(ndcl, sub_handles[ts-1], 1, &result);
+        if((err != DSPACES_SUB_DONE) || result > 0) {
+            fprintf(stderr, "subscription tailed for ts %d with %d.\n", ts, err);
+            ret = -1;
+        }
+    } 
 	
 	MPI_Barrier(gcomm_);
 
@@ -216,7 +220,7 @@ int test_get_run(int ndims, int* npdim,
 	tm_st = timer_read(&timer_);
 
     if(rank_ == 0 && terminate) {
-        fprintf(stderr, "Reader sending kill signal to server.\n");
+        fprintf(stderr, "Subscriber sending kill signal to server.\n");
         dspaces_kill(ndcl);
     }
 

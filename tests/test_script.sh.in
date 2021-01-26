@@ -89,4 +89,15 @@ elif [ $1 -eq 7 ]; then
         fi
         wait $serverproc || exit 1
         wait $writerproc
+elif [ $1 -eq 8 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -s 8 -t -a
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
+        wait $writerproc
 fi

@@ -91,7 +91,7 @@ int check_data(const char *var_name, double *buf, int num_elem, int rank,
 }
 
 static int couple_read_nd(dspaces_client_t client, unsigned int ts,
-                          int num_vars, int dims)
+                          int num_vars, int dims, int allocate)
 {
     double **data_tab = (double **)malloc(sizeof(double *) * num_vars);
     char var_name[128];
@@ -116,14 +116,16 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts,
 
     // allocate data
     double *data = NULL;
-    for(i = 0; i < num_vars; i++) {
-        data = allocate_nd(dims);
-        if(data == NULL) {
-            fprintf(stderr, "%s(): allocate_2d() failed.\n", __func__);
-            return -1; // TODO: free buffers
+    if(!allocate) {
+        for(i = 0; i < num_vars; i++) {
+            data = allocate_nd(dims);
+            if(data == NULL) {
+                fprintf(stderr, "%s(): allocate_nd() failed.\n", __func__);
+                return -1; // TODO: free buffers
+            }
+            memset(data, 0, elem_size_ * dims_size);
+            data_tab[i] = data;
         }
-        memset(data, 0, elem_size_ * dims_size);
-        data_tab[i] = data;
     }
 
     MPI_Barrier(gcomm_);
@@ -131,8 +133,13 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts,
 
     for(i = 0; i < num_vars; i++) {
         sprintf(var_name, "mnd_%d", i);
-        err = dspaces_get(client, var_name, ts, elem_size, dims, lb, ub,
-                          data_tab[i], -1);
+        if(allocate) {
+            err = dspaces_aget(client, var_name, ts, dims, lb, ub, (void **)&data_tab[i],
+                               -1);
+        } else {
+            err = dspaces_get(client, var_name, ts, elem_size, dims, lb, ub,
+                              data_tab[i], -1);
+        }
         if(err != 0) {
             fprintf(stderr, "dspaces_get() returned error %d\n", err);
             return err;
@@ -164,7 +171,8 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts,
 }
 
 int test_get_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
-                 size_t elem_size, int num_vars, int terminate, MPI_Comm gcomm)
+                 size_t elem_size, int num_vars, int terminate, int allocate,
+                 MPI_Comm gcomm)
 {
     gcomm_ = gcomm;
     elem_size_ = elem_size;
@@ -202,7 +210,7 @@ int test_get_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     unsigned int ts;
     for(ts = 1; ts <= timesteps_; ts++) {
-        err = couple_read_nd(ndcl, ts, num_vars, ndims);
+        err = couple_read_nd(ndcl, ts, num_vars, ndims, allocate);
         if(err != 0) {
             ret = -1;
         }

@@ -927,8 +927,8 @@ static void get_rpc(hg_handle_t handle)
     hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
                                bulk_handle, 0, size);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer() failed\n",
-                __func__);
+        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer() failed (%d)\n",
+                __func__, hret);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);

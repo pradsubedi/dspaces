@@ -19,6 +19,10 @@ target_link_libraries(test_reader_f dspaces_fortran)
 add_executable(test_sub test_sub.c test_sub_run.c timer.c)
 target_link_libraries(test_sub dspaces)
 
+install(TARGETS dspaces_server terminator
+  DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 configure_file(
   ${PROJECT_SOURCE_DIR}/tests/test_script.sh.in
   ${PROJECT_BINARY_DIR}/tests/test_script.sh

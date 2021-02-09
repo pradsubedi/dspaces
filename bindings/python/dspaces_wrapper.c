@@ -49,7 +49,7 @@ void wrapper_dspaces_put(PyObject *clientppy, PyObject *obj, const char *name,
 
 PyObject *wrapper_dspaces_get(PyObject *clientppy, const char *name,
                               int version, PyObject *lbt, PyObject *ubt,
-                              int type, int timeout)
+                              PyArray_Descr *dtype, int timeout)
 {
     dspaces_client_t *clientp = PyLong_AsVoidPtr(clientppy);
     int ndim = PyTuple_GET_SIZE(lbt);
@@ -58,7 +58,7 @@ PyObject *wrapper_dspaces_get(PyObject *clientppy, const char *name,
     void *data;
     PyObject *item;
     PyObject *arr;
-    PyArray_Descr *descr = PyArray_DescrFromType(type);
+    PyArray_Descr *descr = PyArray_DescrNew(dtype);
     npy_intp dims[ndim];
     int i;
 

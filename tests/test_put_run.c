@@ -105,6 +105,14 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
     MPI_Barrier(gcomm_);
     tm_st = timer_read(&timer_);
 
+    if(rank_ == root) {
+        err = dspaces_put_meta(ndph, "mnd", ts, &elem_size, sizeof(elem_size));
+        if(err != 0) {
+            fprintf(stderr, "dspaces_put_meta returned error %d", err);
+            return (err);
+        }
+    }
+
     for(i = 0; i < num_vars; i++) {
         sprintf(var_name, "mnd_%d", i);
         if(!local_mode)

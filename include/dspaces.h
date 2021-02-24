@@ -18,6 +18,10 @@ extern "C" {
 typedef struct dspaces_client *dspaces_client_t;
 #define dspaces_CLIENT_NULL ((dspaces_client_t)NULL)
 
+#define META_MODE_SPEC 1
+#define META_MODE_NEXT 2
+#define META_MODE_LAST 3
+
 /**
  * @brief Creates a dspaces client.
  * @param[in] rank: rank of this process relative in the application
@@ -247,7 +251,7 @@ int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait,
  * @param[in] client: dspaces client
  * @param[in] subh: handle for the subscription to be cancelled.
  *
- * @return zero for success, for failure (probably invalid subh)
+ * @return zero for success, non-zero for failure (probably invalid subh)
  */
 int dspaces_cancel_sub(dspaces_client_t client, dspaces_sub_t subh);
 
@@ -260,6 +264,49 @@ int dspaces_cancel_sub(dspaces_client_t client, dspaces_sub_t subh);
  * @param[in] client dspaces client
  */
 void dspaces_kill(dspaces_client_t client);
+
+/**
+ * @brief store metadata to dataspaces.
+ *
+ * Metadata is a byte array indexed by name and version. Only one metadata array
+ * per name/version pair should be stored.
+ *
+ * @param[in] client: dspaces client
+ * @param[in] name: the metadata object name
+ * @param[in] version: the metadata object version
+ * @param[in] data: the buffer containing the metadata
+ * @param[in] len: the number of bytes to store from data
+ *
+ * @return zero for success, non-zero for failure
+ */
+int dspaces_put_meta(dspaces_client_t client, char *name, unsigned int version,
+                     void *data, unsigned int len);
+
+/**
+ * @brief access stored metadata
+ *
+ * Access stored metadata. There are several modes of metadata access:
+ *  META_MODE_SPEC - specify the exact name/version pair of metadata to
+ * retrieve. Will not block. META_MODE_NEXT - retrieve the lowest stored version
+ * of metadata with a given name that is more recent than the current version.
+ * If nothing newer exists, block until new metadata arrives. META_MODE_LAST -
+ * get the highest version metadata available for the given name. If nothing
+ * higher than the current version exists, blocks waiting for new metadata.
+ *
+ *  dspaces_get_meta allocates a buffer to store the results.
+ *
+ * @param[in] client: dspaces client
+ * @param[in] name: the metadata object name
+ * @param[in] mode: the access mode
+ * @param[in] current: the version to be queried (in META_MODE_SPEC mode) or be
+ * counted as current for other modes.
+ * @param[out] version: the version of the returned metadata
+ * @param[out] data: the results buffer
+ * @param[out] len: the size of the results buffer in bytes
+ */
+int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
+                     unsigned int current, unsigned int *version, void **data,
+                     unsigned int *len);
 
 #if defined(__cplusplus)
 }

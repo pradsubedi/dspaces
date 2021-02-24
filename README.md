@@ -48,6 +48,12 @@ DataSpaces no longer requires an MPI communicator or appid be passed to `dspaces
 
 `dspaces_lock` operations have been removed.
 
+(*NEW in 2.1*): pub/sub operation: specify a data range and a callback to perform upon that data range. See the `test_sub` utility for example usage.
+
+(*NEW in 2.1*): metadata functionality: post unstructured buffers indexed by name/version, with various access modes. 
+
+(*NEW in 2.1*): `dspaces_aget()` allocates the data buffer instead of requiring a properly sized buffer be allocated.
+
 ## DataSpaces usage
 
 Setting the `DSPACES_DEBUG` environment variable generates debugging output.
@@ -86,7 +92,7 @@ DataSpaces provides a terminator utility for sending a kill signal to the server
 
 ### Example DataSpaces programs
 
-`test_writer` and `test_reader` are example DataSpaces client programs. The former iteratively writes variables into DataSpaces storage and the latter reads those variables, checking for data corruption.
+`test_writer`, `test_reader`, and `test_sub` are example DataSpaces client programs. `test_writer` iteratively writes variables into DataSpaces storage and `test_reader` reads those variables, checking for data corruption. `test_sub` performs the same function as `test_reader`, but using the pub/sub mode of operation.
 
 #### test_writer usage:
 ```
@@ -111,7 +117,19 @@ test_reader <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] <timesteps> [-s <ele
    -s <elem_size>    - the number of bytes in each element. Defaults to 8
    -c <var_count>    - the number of variables written in each iteration. Defaults to one
    -t                - send server termination signal after reading is complete
-   ```
- 
+   -a                - ask dataspaces to allocate read data buffer
+```
+
+#### test_sub usage
+```
+test_sub <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] <timesteps> [-s <elem_size>] [-c <var_count>] [-t]
+   dims              - number of data dimensions. Must be at least one
+   np[i]             - the number of processes in the ith dimension. The product of np[0],...,np[dim-1] must be the number of MPI ranks
+   sp[i]             - the per-process data size in the ith dimension
+   timesteps         - the number of timestep iterations written
+   -s <elem_size>    - the number of bytes in each element. Defaults to 8
+   -c <var_count>    - the number of variables written in each iteration. Defaults to one
+   -t                - send server termination signal after reading is complete
+```
  
  

@@ -105,6 +105,10 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts,
     set_offset_nd(rank_, dims);
     uint64_t dims_size = 1;
     int elem_size = elem_size_;
+    void *meta;
+    int meta_elem_size;
+    unsigned int meta_len;
+    int next_ver;
     uint64_t lb[10] = {0}, ub[10] = {0};
     for(i = 0; i < dims; i++) {
         lb[i] = off[i];
@@ -130,6 +134,33 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts,
 
     MPI_Barrier(gcomm_);
     tm_st = timer_read(&timer_);
+
+    err = dspaces_get_meta(client, "mnd", META_MODE_NEXT, ts - 1, &next_ver,
+                           &meta, &meta_len);
+    if(err != 0) {
+        fprintf(stderr, "dspaces_get_meta() returned error %d\n", err);
+        return err;
+    }
+    if(next_ver != ts) {
+        fprintf(stderr,
+                "Missing metadata step! Expected version %i, got version %i\n",
+                ts, next_ver);
+        return -1;
+    }
+    if(meta_len != sizeof(meta_elem_size)) {
+        fprintf(stderr,
+                "Metadata is misformated. Expected %zi bytes, got %d bytes.\n",
+                sizeof(meta_elem_size), meta_len);
+        return -1;
+    }
+    meta_elem_size = *(int *)meta;
+    if(meta_elem_size != elem_size) {
+        fprintf(stderr,
+                "Posted element size in metadata different than expected. "
+                "Expected %d, got %d.\n",
+                elem_size, meta_elem_size);
+        return (-1);
+    }
 
     for(i = 0; i < num_vars; i++) {
         sprintf(var_name, "mnd_%d", i);

@@ -19,7 +19,7 @@ void print_usage()
 {
     fprintf(
         stderr,
-        "Usage: test_sb <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] "
+        "Usage: test_sub <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] "
         "<timesteps> [-s <elem_size>] [-c <var_count>] [-t]\n"
         "   dims              - number of data dimensions. Must be at least "
         "one\n"

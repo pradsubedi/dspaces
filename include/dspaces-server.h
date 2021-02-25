@@ -10,7 +10,6 @@
 
 #include <assert.h>
 #include <dspaces-common.h>
-#include <margo.h>
 #include <mpi.h>
 #include <stdio.h>
 

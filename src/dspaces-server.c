@@ -5,6 +5,7 @@
  * See COPYRIGHT in top-level directory.
  */
 #include "dspaces-server.h"
+#include "dspaces.h"
 #include "gspace.h"
 #include "ss_data.h"
 #include <abt.h>
@@ -43,7 +44,9 @@ struct dspaces_provider {
     margo_instance_id mid;
     hg_id_t put_id;
     hg_id_t put_local_id;
+    hg_id_t put_meta_id;
     hg_id_t query_id;
+    hg_id_t query_meta_id;
     hg_id_t get_id;
     hg_id_t obj_update_id;
     hg_id_t odsc_internal_id;
@@ -76,8 +79,10 @@ struct dspaces_provider {
 
 DECLARE_MARGO_RPC_HANDLER(put_rpc);
 DECLARE_MARGO_RPC_HANDLER(put_local_rpc);
+DECLARE_MARGO_RPC_HANDLER(put_meta_rpc);
 DECLARE_MARGO_RPC_HANDLER(get_rpc);
 DECLARE_MARGO_RPC_HANDLER(query_rpc);
+DECLARE_MARGO_RPC_HANDLER(query_meta_rpc);
 DECLARE_MARGO_RPC_HANDLER(obj_update_rpc);
 DECLARE_MARGO_RPC_HANDLER(odsc_internal_rpc);
 DECLARE_MARGO_RPC_HANDLER(ss_rpc);
@@ -86,8 +91,10 @@ DECLARE_MARGO_RPC_HANDLER(sub_rpc);
 
 static void put_rpc(hg_handle_t h);
 static void put_local_rpc(hg_handle_t h);
+static void put_meta_rpc(hg_handle_t h);
 static void get_rpc(hg_handle_t h);
 static void query_rpc(hg_handle_t h);
+static void query_meta_rpc(hg_handle_t h);
 static void obj_update_rpc(hg_handle_t h);
 static void odsc_internal_rpc(hg_handle_t h);
 static void ss_rpc(hg_handle_t h);
@@ -699,9 +706,13 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         margo_registered_name(server->mid, "put_rpc", &server->put_id, &flag);
         margo_registered_name(server->mid, "put_local_rpc",
                               &server->put_local_id, &flag);
+        margo_registered_name(server->mid, "put_meta_rpc", &server->put_meta_id,
+                              &flag);
         margo_registered_name(server->mid, "get_rpc", &server->get_id, &flag);
         margo_registered_name(server->mid, "query_rpc", &server->query_id,
                               &flag);
+        margo_registered_name(server->mid, "query_meta_rpc",
+                              &server->query_meta_id, &flag);
         margo_registered_name(server->mid, "obj_update_rpc",
                               &server->obj_update_id, &flag);
         margo_registered_name(server->mid, "odsc_internal_rpc",
@@ -722,12 +733,22 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
                            bulk_out_t, put_local_rpc);
         margo_register_data(server->mid, server->put_local_id, (void *)server,
                             NULL);
+        server->put_meta_id =
+            MARGO_REGISTER(server->mid, "put_meta_rpc", put_meta_in_t,
+                           bulk_out_t, put_meta_rpc);
+        margo_register_data(server->mid, server->put_meta_id, (void *)server,
+                            NULL);
         server->get_id = MARGO_REGISTER(server->mid, "get_rpc", bulk_in_t,
                                         bulk_out_t, get_rpc);
         margo_register_data(server->mid, server->get_id, (void *)server, NULL);
         server->query_id = MARGO_REGISTER(server->mid, "query_rpc", odsc_gdim_t,
                                           odsc_list_t, query_rpc);
         margo_register_data(server->mid, server->query_id, (void *)server,
+                            NULL);
+        server->query_meta_id =
+            MARGO_REGISTER(server->mid, "query_meta_rpc", query_meta_in_t,
+                           query_meta_out_t, query_meta_rpc);
+        margo_register_data(server->mid, server->query_meta_id, (void *)server,
                             NULL);
         server->obj_update_id = MARGO_REGISTER(
             server->mid, "obj_update_rpc", odsc_gdim_t, void, obj_update_rpc);
@@ -1022,6 +1043,68 @@ static void put_local_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(put_local_rpc)
 
+static void put_meta_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid = margo_hg_handle_get_instance(handle);
+    const struct hg_info *info = margo_get_info(handle);
+    dspaces_provider_t server =
+        (dspaces_provider_t)margo_registered_data(mid, info->id);
+    hg_return_t hret;
+    put_meta_in_t in;
+    bulk_out_t out;
+    struct meta_data *mdata;
+    hg_size_t rdma_size;
+    hg_bulk_t bulk_handle;
+
+    hret = margo_get_input(handle, &in);
+    assert(hret == HG_SUCCESS);
+
+    mdata = malloc(sizeof(*mdata));
+    mdata->name = strdup(in.name);
+    mdata->version = in.version;
+    mdata->length = in.length;
+    mdata->data = malloc(in.length);
+    rdma_size = mdata->length;
+    hret = margo_bulk_create(mid, 1, (void **)&mdata->data, &rdma_size,
+                             HG_BULK_WRITE_ONLY, &bulk_handle);
+
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer failed!\n", __func__);
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        margo_free_input(handle, &in);
+        margo_bulk_free(bulk_handle);
+        margo_destroy(handle);
+        return;
+    }
+
+    hret = margo_bulk_transfer(mid, HG_BULK_PULL, info->addr, in.handle, 0,
+                               bulk_handle, 0, rdma_size);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer failed!\n", __func__);
+        out.ret = dspaces_ERR_MERCURY;
+        margo_respond(handle, &out);
+        margo_free_input(handle, &in);
+        margo_bulk_free(bulk_handle);
+        margo_destroy(handle);
+        return;
+    }
+
+    ABT_mutex_lock(server->ls_mutex);
+    ls_add_meta(server->dsg->ls, mdata);
+    ABT_mutex_unlock(server->ls_mutex);
+
+    DEBUG_OUT("Received meta data of length %d, name \"%s\" version %d.\n",
+              mdata->length, mdata->name, mdata->version);
+
+    out.ret = dspaces_SUCCESS;
+    margo_bulk_free(bulk_handle);
+    margo_respond(handle, &out);
+    margo_free_input(handle, &in);
+    margo_destroy(handle);
+}
+DEFINE_MARGO_RPC_HANDLER(put_meta_rpc)
+
 static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
                            int timeout, obj_descriptor **results)
 {
@@ -1187,6 +1270,67 @@ static void query_rpc(hg_handle_t handle)
 }
 DEFINE_MARGO_RPC_HANDLER(query_rpc)
 
+static void query_meta_rpc(hg_handle_t handle)
+{
+    margo_instance_id mid;
+    const struct hg_info *info;
+    dspaces_provider_t server;
+    query_meta_in_t in;
+    query_meta_out_t out;
+    struct meta_data *mdata, *mdlatest;
+    hg_return_t hret;
+
+    mid = margo_hg_handle_get_instance(handle);
+    info = margo_get_info(handle);
+    server = (dspaces_provider_t)margo_registered_data(mid, info->id);
+    hret = margo_get_input(handle, &in);
+    assert(hret == HG_SUCCESS && "margo_get_input() succeeded");
+
+    DEBUG_OUT("received metadata query for version %d of '%s', mode %d.\n",
+              in.version, in.name, in.mode);
+
+    switch(in.mode) {
+    case META_MODE_SPEC:
+        mdata = meta_find_entry(server->dsg->ls, in.name, in.version, 0);
+        break;
+    case META_MODE_NEXT:
+        mdata = meta_find_next_entry(server->dsg->ls, in.name, in.version, 1);
+        break;
+    case META_MODE_LAST:
+        mdata = meta_find_next_entry(server->dsg->ls, in.name, in.version, 1);
+        mdlatest = mdata;
+        do {
+            mdata = mdlatest;
+            mdlatest = meta_find_next_entry(server->dsg->ls, in.name,
+                                            mdlatest->version, 0);
+        } while(mdlatest);
+        break;
+    default:
+        fprintf(stderr,
+                "ERROR: unkown mode %d while processing metadata query.\n",
+                in.mode);
+    }
+
+    if(mdata) {
+        out.size = mdata->length;
+        hret = margo_bulk_create(mid, 1, (void **)&mdata->data, &out.size,
+                                 HG_BULK_READ_ONLY, &out.handle);
+        out.version = mdata->version;
+    } else {
+        out.size = 0;
+        out.version = -1;
+    }
+
+    DEBUG_OUT("received metadata query for version %d of '%s', mode %d.\n",
+              in.version, in.name, in.mode);
+
+    margo_respond(handle, &out);
+    margo_free_input(handle, &in);
+    margo_bulk_free(out.handle);
+    margo_destroy(handle);
+}
+DEFINE_MARGO_RPC_HANDLER(query_meta_rpc)
+
 static void get_rpc(hg_handle_t handle)
 {
     hg_return_t hret;
@@ -1232,8 +1376,8 @@ static void get_rpc(hg_handle_t handle)
     hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
                                bulk_handle, 0, size);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer() failure\n",
-                __func__);
+        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer() failure (%d)\n",
+                __func__, hret);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -1242,6 +1386,7 @@ static void get_rpc(hg_handle_t handle)
         return;
     }
     margo_bulk_free(bulk_handle);
+    out.ret = dspaces_SUCCESS;
     out.ret = dspaces_SUCCESS;
     obj_data_free(od);
     margo_respond(handle, &out);

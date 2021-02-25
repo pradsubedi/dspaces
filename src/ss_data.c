@@ -798,8 +798,21 @@ ss_storage *ls_alloc(int max_versions)
     }
 
     memset(ls, 0, sizeof(*ls));
-    for(i = 0; i < max_versions; i++)
-        INIT_LIST_HEAD(&ls->obj_hash[i]);
+    ls->meta_hash = malloc(sizeof(struct list_head) * max_versions);
+    // extra cond/mutex/sub for the no version subs
+    ls->meta_cond = malloc(sizeof(*ls->meta_cond) * (max_versions + 1));
+    ls->meta_mutex = malloc(sizeof(*ls->meta_mutex) * (max_versions + 1));
+    ls->meta_subs = malloc(sizeof(struct list_head) * (max_versions + 1));
+
+    for(i = 0; i <= max_versions; i++) {
+        if(i < max_versions) {
+            INIT_LIST_HEAD(&ls->meta_hash[i]);
+            INIT_LIST_HEAD(&ls->obj_hash[i]);
+        }
+        INIT_LIST_HEAD(&ls->meta_subs[i]);
+        ABT_cond_create(&ls->meta_cond[i]);
+        ABT_mutex_create(&ls->meta_mutex[i]);
+    }
     ls->size_hash = max_versions;
 
     return ls;
@@ -811,6 +824,7 @@ void ls_free(ss_storage *ls)
         return;
 
     struct obj_data *od, *t;
+    struct meta_data *mdata, *tm;
     struct list_head *list;
     int i;
 
@@ -821,6 +835,12 @@ void ls_free(ss_storage *ls)
             ls_remove(ls, od);
             obj_data_free(od);
         }
+        list = &ls->meta_hash[i];
+        list_for_each_entry_safe(mdata, tm, list, struct meta_data, entry)
+        {
+            list_del(&mdata->entry);
+            meta_data_free(mdata);
+        }
     }
 
     if(ls->num_obj != 0) {
@@ -828,6 +848,79 @@ void ls_free(ss_storage *ls)
                 ls->num_obj);
     }
     free(ls);
+}
+
+struct meta_data *ls_find_meta(ss_storage *ls, const char *name, int version)
+{
+    struct meta_data *mdata;
+    struct list_head *list;
+    int index;
+
+    index = version % ls->size_hash;
+    list = &ls->meta_hash[index];
+    list_for_each_entry(mdata, list, struct meta_data, entry)
+    {
+        if(strcmp(name, mdata->name) == 0 && mdata->version == version) {
+            return (mdata);
+        }
+    }
+
+    return (NULL);
+}
+
+void ls_add_meta(ss_storage *ls, struct meta_data *mdata)
+{
+    struct meta_sub_list_entry *msub, *mt;
+    struct list_head *list;
+    int msub_found = 0;
+    int index;
+
+    if(ls_find_meta(ls, mdata->name, mdata->version)) {
+        fprintf(stderr,
+                "WARNING: metadata already received for \"%s\", version %d. "
+                "Ignoring.\n",
+                mdata->name, mdata->version);
+        return;
+    }
+    index = mdata->version % ls->size_hash;
+    list = &ls->meta_hash[index];
+
+    ABT_mutex_lock(ls->meta_mutex[index]);
+    list_add(&mdata->entry, list);
+
+    list_for_each_entry_safe(msub, mt, &ls->meta_subs[index],
+                             struct meta_sub_list_entry, entry)
+    {
+        if(strcmp(msub->name, mdata->name) == 0 &&
+           msub->version == mdata->version) {
+            msub->mdata = mdata;
+            msub_found = 1;
+            list_del(&msub->entry);
+        }
+    }
+
+    if(msub_found) {
+        ABT_cond_broadcast(ls->meta_cond[index]);
+    }
+    ABT_mutex_unlock(ls->meta_mutex[index]);
+
+    // check for no version matches
+    msub_found = 0;
+    ABT_mutex_lock(ls->meta_mutex[ls->size_hash]);
+    list_for_each_entry_safe(msub, mt, &ls->meta_subs[ls->size_hash],
+                             struct meta_sub_list_entry, entry)
+    {
+        if(strcmp(msub->name, mdata->name) == 0) {
+            msub->mdata = mdata;
+            msub_found = 1;
+            list_del(&msub->entry);
+        }
+    }
+
+    if(msub_found) {
+        ABT_cond_broadcast(ls->meta_cond[ls->size_hash]);
+    }
+    ABT_mutex_unlock(ls->meta_mutex[ls->size_hash]);
 }
 
 /*
@@ -953,7 +1046,6 @@ struct obj_data *ls_find_no_version(ss_storage *ls, obj_descriptor *odsc)
 
     index = odsc->version % ls->size_hash;
     list = &ls->obj_hash[index];
-
     list_for_each_entry(od, list, struct obj_data, obj_entry)
     {
         if(obj_desc_by_name_intersect(odsc, &od->obj_desc))
@@ -1048,6 +1140,17 @@ struct obj_data *obj_data_alloc_with_data(obj_descriptor *odsc, void *data)
     // TODO: what about the descriptor ?
 
     return od;
+}
+
+void meta_data_free(struct meta_data *mdata)
+{
+    if(mdata) {
+        free(mdata->name);
+        if(mdata->data) {
+            free(mdata->data);
+        }
+        free(mdata);
+    }
 }
 
 void obj_data_free(struct obj_data *od)
@@ -1462,10 +1565,10 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
         return err;
     memcpy(&odscl->odsc, odsc, sizeof(*odsc));
 
+    ABT_mutex_lock(de->hash_mutex[n]);
     list_add(&odscl->odsc_entry, &de->odsc_hash[n]);
     de->odsc_num++;
 
-    ABT_mutex_lock(de->hash_mutex[n]);
     list_for_each_entry_safe(sub, tmp, &de->dht_subs[n],
                              struct dht_sub_list_entry, entry)
     {
@@ -1552,6 +1655,107 @@ int dht_find_versions(struct dht_entry *de, obj_descriptor *q_odsc,
     }
 
     return n;
+}
+
+// meta_mutex for version hash is already locked
+struct meta_data *ls_subscribe_meta(ss_storage *ls, const char *name,
+                                    int version)
+{
+    struct meta_data *mdata;
+    struct meta_sub_list_entry msub;
+    int index;
+    struct list_head *sub_list;
+
+    index = version % ls->size_hash;
+    sub_list = &ls->meta_subs[index];
+    msub.version = version;
+    msub.name = name;
+    msub.mdata = NULL;
+    list_add(&msub.entry, sub_list);
+
+    do {
+        ABT_cond_wait(ls->meta_cond[index], ls->meta_mutex[index]);
+    } while(!msub.mdata);
+
+    return (msub.mdata);
+}
+
+struct meta_data *ls_subscribe_meta_no_version(ss_storage *ls, const char *name)
+{
+    struct meta_data *mdata;
+    struct meta_sub_list_entry msub;
+    struct list_head *sub_list;
+
+    sub_list = &ls->meta_subs[ls->size_hash];
+    msub.version = -1;
+    msub.name = name;
+    msub.mdata = NULL;
+    list_add(&msub.entry, sub_list);
+
+    do {
+        ABT_cond_wait(ls->meta_cond[ls->size_hash],
+                      ls->meta_mutex[ls->size_hash]);
+    } while(!msub.mdata);
+
+    return (msub.mdata);
+}
+
+struct meta_data *meta_find_entry(ss_storage *ls, const char *name, int version,
+                                  int wait)
+{
+    struct meta_data *mdata;
+    int index;
+
+    index = version % ls->size_hash;
+    ABT_mutex_lock(ls->meta_mutex[index]);
+    mdata = ls_find_meta(ls, name, version);
+    if(mdata || !wait) {
+        ABT_mutex_unlock(ls->meta_mutex[index]);
+        return (mdata);
+    }
+
+    mdata = ls_subscribe_meta(ls, name, version);
+    ABT_mutex_unlock(ls->meta_mutex[index]);
+
+    return (mdata);
+}
+
+struct meta_data *meta_find_next_entry(ss_storage *ls, const char *name,
+                                       int curr, int wait)
+{
+    int i, index;
+    struct list_head *list;
+    struct meta_data *mdata, *mdres;
+
+    for(index = 0; index <= ls->size_hash; index++) {
+        ABT_mutex_lock(ls->meta_mutex[index]);
+    }
+    for(i = 0; i < ls->size_hash; i++) {
+        index = (curr + i + 1) % ls->size_hash;
+        list = &ls->meta_hash[index];
+        list_for_each_entry(mdata, list, struct meta_data, entry)
+        {
+            if(strcmp(mdata->name, name) == 0 && mdata->version > curr &&
+               (!mdres || mdata->version < mdres->version)) {
+                mdres = mdata;
+                if(mdata->version < (curr + ls->size_hash)) {
+                    break;
+                }
+            }
+        }
+    }
+    for(index = 0; index < ls->size_hash; index++) {
+        ABT_mutex_unlock(ls->meta_mutex[index]);
+    }
+    if(mdres || !wait) {
+        ABT_mutex_unlock(ls->meta_mutex[ls->size_hash]);
+        return (mdres);
+    }
+
+    mdres = ls_subscribe_meta_no_version(ls, name);
+    ABT_mutex_unlock(ls->meta_mutex[ls->size_hash]);
+
+    return (mdres);
 }
 
 void copy_global_dimension(struct global_dimension *l, int ndim,

@@ -9,7 +9,7 @@
 #define __DSPACES_CLIENT_H
 
 #include <dspaces-common.h>
-#include <margo.h>
+#include <stdint.h>
 
 #if defined(__cplusplus)
 extern "C" {

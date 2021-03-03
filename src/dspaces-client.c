@@ -511,7 +511,7 @@ void dspaces_define_gdim(dspaces_client_t client, const char *var_name,
 }
 
 int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
-                int elem_size, int ndim, uint64_t *lb, uint64_t *ub, void *data)
+                int elem_size, int ndim, uint64_t *lb, uint64_t *ub, const void *data)
 {
     hg_addr_t server_addr;
     hg_handle_t handle;
@@ -677,8 +677,8 @@ static int dspaces_init_listener(dspaces_client_t client)
     return (ret);
 }
 
-int dspaces_put_meta(dspaces_client_t client, char *name, unsigned int version,
-                     void *data, unsigned int len)
+int dspaces_put_meta(dspaces_client_t client, char *name, int version,
+                     const void *data, unsigned int len)
 {
     hg_addr_t server_addr;
     hg_handle_t handle;
@@ -944,7 +944,7 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
 }
 
 int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
-                     unsigned int current, unsigned int *version, void **data,
+                     int current, int *version, void **data,
                      unsigned int *len)
 {
     query_meta_in_t in;

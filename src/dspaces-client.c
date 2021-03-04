@@ -511,7 +511,8 @@ void dspaces_define_gdim(dspaces_client_t client, const char *var_name,
 }
 
 int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
-                int elem_size, int ndim, uint64_t *lb, uint64_t *ub, const void *data)
+                int elem_size, int ndim, uint64_t *lb, uint64_t *ub,
+                const void *data)
 {
     hg_addr_t server_addr;
     hg_handle_t handle;
@@ -689,6 +690,9 @@ int dspaces_put_meta(dspaces_client_t client, char *name, int version,
 
     int ret = dspaces_SUCCESS;
 
+    DEBUG_OUT("posting metadata for `%s`, version %d with lenght %i bytes.\n",
+              name, version, len);
+
     in.name = strdup(name);
     in.length = len;
     in.version = version;
@@ -722,6 +726,8 @@ int dspaces_put_meta(dspaces_client_t client, char *name, int version,
         margo_destroy(handle);
         return dspaces_ERR_MERCURY;
     }
+
+    DEBUG_OUT("metadata posted successfully.\n");
 
     ret = out.ret;
     margo_free_output(handle, &out);
@@ -929,6 +935,8 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
 
     fill_odsc(var_name, ver, elem_size, ndim, lb, ub, &odsc);
 
+    DEBUG_OUT("Querying %s with timeout %d\n", obj_desc_sprint(&odsc), timeout);
+
     num_odscs = get_odscs(client, &odsc, timeout, &odsc_tab);
 
     DEBUG_OUT("Finished query - need to fetch %d objects\n", num_odscs);
@@ -943,9 +951,8 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
     return (0);
 }
 
-int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
-                     int current, int *version, void **data,
-                     unsigned int *len)
+int dspaces_get_meta(dspaces_client_t client, char *name, int mode, int current,
+                     int *version, void **data, unsigned int *len)
 {
     query_meta_in_t in;
     query_meta_out_t out;
@@ -957,6 +964,9 @@ int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
     in.name = strdup(name);
     in.version = current;
     in.mode = mode;
+
+    DEBUG_OUT("querying meta data '%s' version %d (mode %d).\n", name, current,
+              mode);
 
     get_meta_server_address(client, &server_addr);
     hret =
@@ -976,7 +986,10 @@ int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
         goto err_hg_output;
     }
 
+    DEBUG_OUT("Replied with version %d.\n", out.version);
+
     if(out.size) {
+        DEBUG_OUT("fetching %zi bytes.\n", out.size);
         *data = malloc(out.size);
         hret = margo_bulk_create(client->mid, 1, data, &out.size,
                                  HG_BULK_WRITE_ONLY, &bulk_handle);
@@ -992,8 +1005,11 @@ int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
                     hret);
             goto err_bulk;
         }
+        DEBUG_OUT("metadata for '%s', version %d retrieved successfully.\n",
+                  name, out.version);
     } else {
         DEBUG_OUT("Metadata is empty.\n");
+        *data = NULL;
     }
 
     *len = out.size;

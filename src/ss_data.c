@@ -332,18 +332,25 @@ static int ssd_get_bpd(struct sspace *ss) { return ss->bpd; }
 */
 static int dht_construct_hash(struct dht *dht, struct sspace *ssd)
 {
-    const uint64_t sn = bbox_volume(&dht->bb_glb_domain) / dht->num_entries;
+    uint64_t vol = bbox_volume(&dht->bb_glb_domain);
+    uint64_t *sn = malloc(sizeof(*sn) * dht->num_entries);
     struct intv *i_tab, intv;
     struct dht_entry *de;
     uint64_t len;
     int num_intv, i, j;
     int err = -ENOMEM;
 
+    for(i = 0; i < dht->num_entries; i++) {
+        sn[i] = vol / dht->num_entries;
+        if(i < vol % dht->num_entries) {
+            sn[i]++;
+        }
+    }
+
     bbox_to_intv(&dht->bb_glb_domain, ssd->max_dim, ssd->bpd, &i_tab,
                  &num_intv);
-
     for(i = 0, j = 0; i < dht->num_entries; i++) {
-        len = sn;
+        len = sn[i];
 
         de = dht->ent_tab[i];
         de->rank = i;
@@ -366,11 +373,12 @@ static int dht_construct_hash(struct dht *dht, struct sspace *ssd)
         de->i_virt.lb = de->i_tab[0].lb;
         de->i_virt.ub = de->i_tab[de->num_intv - 1].ub;
         de->i_tab = realloc(de->i_tab, sizeof(intv) * de->num_intv);
-        if(!de->i_tab)
+        if(!de->i_tab && de->num_intv)
             break;
     }
 
     free(i_tab);
+    free(sn);
 
     if(i == dht->num_entries)
         return 0;
@@ -1730,6 +1738,7 @@ struct meta_data *meta_find_next_entry(ss_storage *ls, const char *name,
     for(index = 0; index <= ls->size_hash; index++) {
         ABT_mutex_lock(ls->meta_mutex[index]);
     }
+    mdres = NULL;
     for(i = 0; i < ls->size_hash; i++) {
         index = (curr + i + 1) % ls->size_hash;
         list = &ls->meta_hash[index];

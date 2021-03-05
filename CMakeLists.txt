@@ -9,7 +9,7 @@
 #
 
 cmake_minimum_required (VERSION 3.0)
-project (dspaces VERSION 2.1.0 LANGUAGES C)
+project (dspaces VERSION 2.1.1 LANGUAGES C)
 #enable_testing ()
 
 include(GNUInstallDirs)

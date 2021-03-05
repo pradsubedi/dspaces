@@ -431,16 +431,18 @@ static int free_sspace(struct ds_gspace *dsg_l)
     return 0;
 }
 
-static struct sspace *lookup_sspace(struct ds_gspace *dsg_l,
+static struct sspace *lookup_sspace(dspaces_provider_t server,
                                     const char *var_name,
                                     const struct global_dimension *gd)
 {
     struct global_dimension gdim;
+    struct ds_gspace *dsg_l = server->dsg;
     memcpy(&gdim, gd, sizeof(struct global_dimension));
 
     // Return the default shared space created based on
     // global data domain specified in dataspaces.conf
     if(global_dimension_equal(&gdim, &dsg_l->default_gdim)) {
+        DEBUG_OUT("uses default gdim\n");
         return dsg_l->ssd;
     }
 
@@ -458,6 +460,8 @@ static struct sspace *lookup_sspace(struct ds_gspace *dsg_l,
             return ssd_entry->ssd;
     }
 
+    DEBUG_OUT("didn't find an existing shared space. Make a new one.\n");
+
     // If not found, add new shared space
     int i, err;
     struct bbox domain;
@@ -471,6 +475,7 @@ static struct sspace *lookup_sspace(struct ds_gspace *dsg_l,
     ssd_entry = malloc(sizeof(struct sspace_list_entry));
     memcpy(&ssd_entry->gdim, &gdim, sizeof(struct global_dimension));
 
+    DEBUG_OUT("allocate the ssd.\n");
     ssd_entry->ssd = ssd_alloc(&domain, dsg_l->size_sp, ds_conf.max_versions,
                                ds_conf.hash_version);
     if(!ssd_entry->ssd) {
@@ -479,6 +484,7 @@ static struct sspace *lookup_sspace(struct ds_gspace *dsg_l,
         return dsg_l->ssd;
     }
 
+    DEBUG_OUT("doing ssd init\n");
     err = ssd_init(ssd_entry->ssd, dsg_l->rank);
     if(err < 0) {
         fprintf(stderr, "%s(): ssd_init failed\n", __func__);
@@ -494,7 +500,7 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od,
 {
     obj_descriptor *odsc = &od->obj_desc;
     ABT_mutex_lock(server->sspace_mutex);
-    struct sspace *ssd = lookup_sspace(server->dsg, odsc->name, &od->gdim);
+    struct sspace *ssd = lookup_sspace(server, odsc->name, &od->gdim);
     ABT_mutex_unlock(server->sspace_mutex);
     struct dht_entry *dht_tab[ssd->dht->num_entries];
 
@@ -1059,46 +1065,57 @@ static void put_meta_rpc(hg_handle_t handle)
     hret = margo_get_input(handle, &in);
     assert(hret == HG_SUCCESS);
 
+    DEBUG_OUT("Received meta data of length %d, name '%s' version %d.\n",
+              in.length, in.name, in.version);
+
     mdata = malloc(sizeof(*mdata));
     mdata->name = strdup(in.name);
     mdata->version = in.version;
     mdata->length = in.length;
-    mdata->data = malloc(in.length);
+    mdata->data = (in.length > 0) ? malloc(in.length) : NULL;
+
     rdma_size = mdata->length;
-    hret = margo_bulk_create(mid, 1, (void **)&mdata->data, &rdma_size,
-                             HG_BULK_WRITE_ONLY, &bulk_handle);
+    if(rdma_size > 0) {
+        hret = margo_bulk_create(mid, 1, (void **)&mdata->data, &rdma_size,
+                                 HG_BULK_WRITE_ONLY, &bulk_handle);
 
-    if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer failed!\n", __func__);
-        out.ret = dspaces_ERR_MERCURY;
-        margo_respond(handle, &out);
-        margo_free_input(handle, &in);
-        margo_bulk_free(bulk_handle);
-        margo_destroy(handle);
-        return;
+        if(hret != HG_SUCCESS) {
+            fprintf(stderr, "ERROR: (%s): margo_bulk_create failed!\n",
+                    __func__);
+            out.ret = dspaces_ERR_MERCURY;
+            margo_respond(handle, &out);
+            margo_free_input(handle, &in);
+            margo_bulk_free(bulk_handle);
+            margo_destroy(handle);
+            return;
+        }
+
+        hret = margo_bulk_transfer(mid, HG_BULK_PULL, info->addr, in.handle, 0,
+                                   bulk_handle, 0, rdma_size);
+        if(hret != HG_SUCCESS) {
+            fprintf(stderr, "ERROR: (%s): margo_bulk_transfer failed!\n",
+                    __func__);
+            out.ret = dspaces_ERR_MERCURY;
+            margo_respond(handle, &out);
+            margo_free_input(handle, &in);
+            margo_bulk_free(bulk_handle);
+            margo_destroy(handle);
+            return;
+        }
     }
 
-    hret = margo_bulk_transfer(mid, HG_BULK_PULL, info->addr, in.handle, 0,
-                               bulk_handle, 0, rdma_size);
-    if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: (%s): margo_bulk_transfer failed!\n", __func__);
-        out.ret = dspaces_ERR_MERCURY;
-        margo_respond(handle, &out);
-        margo_free_input(handle, &in);
-        margo_bulk_free(bulk_handle);
-        margo_destroy(handle);
-        return;
-    }
+    DEBUG_OUT("adding to metaddata store.\n");
 
     ABT_mutex_lock(server->ls_mutex);
     ls_add_meta(server->dsg->ls, mdata);
     ABT_mutex_unlock(server->ls_mutex);
 
-    DEBUG_OUT("Received meta data of length %d, name \"%s\" version %d.\n",
-              mdata->length, mdata->name, mdata->version);
+    DEBUG_OUT("successfully stored.\n");
 
     out.ret = dspaces_SUCCESS;
-    margo_bulk_free(bulk_handle);
+    if(rdma_size > 0) {
+        margo_bulk_free(bulk_handle);
+    }
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
     margo_destroy(handle);
@@ -1127,9 +1144,12 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
     q_odsc = (obj_descriptor *)query->odsc_gdim.raw_odsc;
     q_gdim = (struct global_dimension *)query->odsc_gdim.raw_gdim;
 
+    DEBUG_OUT("getting sspace lock.\n");
     ABT_mutex_lock(server->sspace_mutex);
-    ssd = lookup_sspace(server->dsg, q_odsc->name, q_gdim);
+    DEBUG_OUT("got lock, looking up shared space for global dimensions.\n");
+    ssd = lookup_sspace(server, q_odsc->name, q_gdim);
     ABT_mutex_unlock(server->sspace_mutex);
+    DEBUG_OUT("found shared space with %i entries.\n", ssd->dht->num_entries);
 
     de_tab = malloc(sizeof(*de_tab) * ssd->dht->num_entries);
     peer_num = ssd_hash(ssd, &(q_odsc->bb), de_tab);
@@ -1291,16 +1311,21 @@ static void query_meta_rpc(hg_handle_t handle)
 
     switch(in.mode) {
     case META_MODE_SPEC:
+        DEBUG_OUT("spec query - searching without waiting...\n");
         mdata = meta_find_entry(server->dsg->ls, in.name, in.version, 0);
         break;
     case META_MODE_NEXT:
+        DEBUG_OUT("find next query...\n");
         mdata = meta_find_next_entry(server->dsg->ls, in.name, in.version, 1);
         break;
     case META_MODE_LAST:
+        DEBUG_OUT("find last query...\n");
         mdata = meta_find_next_entry(server->dsg->ls, in.name, in.version, 1);
         mdlatest = mdata;
         do {
             mdata = mdlatest;
+            DEBUG_OUT("found version %d. Checking for newer...\n",
+                      mdata->version);
             mdlatest = meta_find_next_entry(server->dsg->ls, in.name,
                                             mdlatest->version, 0);
         } while(mdlatest);
@@ -1312,6 +1337,8 @@ static void query_meta_rpc(hg_handle_t handle)
     }
 
     if(mdata) {
+        DEBUG_OUT("found version %d, length %d.", mdata->version,
+                  mdata->length);
         out.size = mdata->length;
         hret = margo_bulk_create(mid, 1, (void **)&mdata->data, &out.size,
                                  HG_BULK_READ_ONLY, &out.handle);
@@ -1320,9 +1347,6 @@ static void query_meta_rpc(hg_handle_t handle)
         out.size = 0;
         out.version = -1;
     }
-
-    DEBUG_OUT("received metadata query for version %d of '%s', mode %d.\n",
-              in.version, in.name, in.mode);
 
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
@@ -1423,7 +1447,7 @@ static void odsc_internal_rpc(hg_handle_t handle)
 
     obj_descriptor odsc, *odsc_tab;
     ABT_mutex_lock(server->sspace_mutex);
-    struct sspace *ssd = lookup_sspace(server->dsg, in_odsc.name, &od_gdim);
+    struct sspace *ssd = lookup_sspace(server, in_odsc.name, &od_gdim);
     ABT_mutex_unlock(server->sspace_mutex);
     podsc = malloc(sizeof(*podsc) * ssd->ent_self->odsc_num);
     int num_odsc;
@@ -1492,7 +1516,7 @@ static void obj_update_rpc(hg_handle_t handle)
 
     DEBUG_OUT("received update_rpc %s\n", obj_desc_sprint(&in_odsc));
     ABT_mutex_lock(server->sspace_mutex);
-    struct sspace *ssd = lookup_sspace(server->dsg, in_odsc.name, &gdim);
+    struct sspace *ssd = lookup_sspace(server, in_odsc.name, &gdim);
     ABT_mutex_unlock(server->sspace_mutex);
     struct dht_entry *de = ssd->ent_self;
 

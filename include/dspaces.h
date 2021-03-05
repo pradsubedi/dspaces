@@ -76,7 +76,7 @@ int dspaces_fini(dspaces_client_t client);
  * @return  0 indicates success.
  */
 int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
-                int size, int ndim, uint64_t *lb, uint64_t *ub, void *data);
+                int size, int ndim, uint64_t *lb, uint64_t *ub, const void *data);
 
 /**
  * @brief Query the space to insert data specified by a geometric
@@ -279,8 +279,8 @@ void dspaces_kill(dspaces_client_t client);
  *
  * @return zero for success, non-zero for failure
  */
-int dspaces_put_meta(dspaces_client_t client, char *name, unsigned int version,
-                     void *data, unsigned int len);
+int dspaces_put_meta(dspaces_client_t client, char *name, int version,
+                     const void *data, unsigned int len);
 
 /**
  * @brief access stored metadata
@@ -305,7 +305,7 @@ int dspaces_put_meta(dspaces_client_t client, char *name, unsigned int version,
  * @param[out] len: the size of the results buffer in bytes
  */
 int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
-                     unsigned int current, unsigned int *version, void **data,
+                     int current, int *version, void **data,
                      unsigned int *len);
 
 #if defined(__cplusplus)

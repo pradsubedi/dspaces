@@ -22,6 +22,19 @@ set_target_properties (dspaces
     PROPERTIES VERSION ${dspaces_VERSION}
     SOVERSION ${dspaces_VERSION_MAJOR})
 
+set(dspaces-server-src util.c bbox.c ss_data.c dspaces-server.c)
+
+add_library(dspaces-server ${dspaces-server-src})
+target_link_libraries (dspaces-server margo m pthread)
+
+target_include_directories (dspaces-server BEFORE PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>)
+
+# for shared libs, establish the lib version
+set_target_properties (dspaces-server
+    PROPERTIES VERSION ${dspaces_VERSION}
+    SOVERSION ${dspaces_VERSION_MAJOR})
+
 #
 # installation stuff (packaging and install commands)
 #
@@ -41,7 +54,7 @@ configure_file ("dspaces.pc.in" "dspaces.pc" @ONLY)
 #
 # "make install" rules
 #
-install (TARGETS dspaces EXPORT dspaces-targets
+install (TARGETS dspaces dspaces-server EXPORT dspaces-targets
          ARCHIVE DESTINATION lib
          LIBRARY DESTINATION lib)
 install (EXPORT dspaces-targets

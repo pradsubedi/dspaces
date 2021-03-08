@@ -1,16 +1,17 @@
 /*
- * Copyright (c) 2020, Rutgers Discovery Informatics Institute, Rutgers University
+ * Copyright (c) 2020, Rutgers Discovery Informatics Institute, Rutgers
+ * University
  *
  * See COPYRIGHT in top-level directory.
  */
 
+#include "mpi.h"
+#include "timer.h"
+#include <dspaces.h>
+#include <margo.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <margo.h>
-#include <dspaces.h>
-#include "timer.h"
-#include "mpi.h"
 
 int main(int argc, char **argv)
 {
@@ -23,14 +24,11 @@ int main(int argc, char **argv)
 
     dspaces_init(rank, &ds);
 
-    if(rank == 0) {
-        dspaces_kill(ds);
-    }
+    dspaces_kill(ds);
 
-    dspaces_fini(ds);            
+    dspaces_fini(ds);
 
     MPI_Finalize();
 
-    return(0);
-
+    return (0);
 }

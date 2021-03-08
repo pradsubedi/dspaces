@@ -20,6 +20,9 @@ if [ $1 -eq 1 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
         serverproc=$!
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer 1 1 64 5 -s 8 -m $storage_mode -t
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator
         wait $serverproc
 elif [ $1 -eq 2 ]; then
@@ -28,7 +31,10 @@ elif [ $1 -eq 2 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
         writerproc=$!
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -s 8 -t
-        wait $serverproc
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
         wait $writerproc
 elif [ $1 -eq 3 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
@@ -36,7 +42,10 @@ elif [ $1 -eq 3 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
         writerproc=$!
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 32 5 -s 8 -t
-        wait $serverproc
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
         wait $writerproc
 elif [ $1 -eq 4 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
@@ -44,7 +53,10 @@ elif [ $1 -eq 4 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
         writerproc=$!
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 2 -s 8 -t
-        wait $writerproc
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $writerproc || exit 1
         wait $serverproc
 elif [ $1 -eq 5 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
@@ -53,6 +65,39 @@ elif [ $1 -eq 5 ]; then
         readerproc=$!
         sleep 7
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t
-        wait $readerproc
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $readerproc || exit 1
         wait $serverproc
+elif [ $1 -eq 6 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer_f &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_reader_f
+        wait $writerproc
+        wait $serverproc
+elif [ $1 -eq 7 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_sub 1 2 64 5 -s 8 -t
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
+        wait $writerproc
+elif [ $1 -eq 8 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -s 8 -t -a
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
+        wait $writerproc
 fi

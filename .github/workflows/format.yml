@@ -1,0 +1,15 @@
+name: format
+
+on: [push, pull_request]
+
+
+jobs:
+    format:
+        runs-on: ubuntu-latest
+        container: philipdavis/dspaces:bionic-margo-plus             
+    
+        steps:
+        - uses: actions/checkout@v2
+
+        - name: clang-format
+          run: scripts/format.sh cf

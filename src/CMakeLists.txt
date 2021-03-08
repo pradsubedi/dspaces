@@ -1,5 +1,5 @@
 # list of source files
-set(dspaces-src util.c bbox.c ss_data.c dspaces-client.c dspaces-server.c)
+set(dspaces-src util.c bbox.c ss_data.c dspaces-client.c)
 
 # load package helper for generating cmake CONFIG packages
 include (CMakePackageConfigHelpers)

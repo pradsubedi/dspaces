@@ -11,16 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern int test_get_run(int dims, int *npdim, uint64_t *spdim, int timestep,
+extern int test_sub_run(int dims, int *npdim, uint64_t *spdim, int timestep,
                         size_t elem_size, int num_vars, int terminate,
-                        int allocate, MPI_Comm gcomm);
+                        MPI_Comm gcomm);
 
 void print_usage()
 {
     fprintf(
         stderr,
-        "Usage: test_reader <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] "
-        "<timesteps> [-s <elem_size>] [-c <var_count>] [-t] [-a]\n"
+        "Usage: test_sub <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] "
+        "<timesteps> [-s <elem_size>] [-c <var_count>] [-t]\n"
         "   dims              - number of data dimensions. Must be at least "
         "one\n"
         "   np[i]             - the number of processes in the ith dimension. "
@@ -33,13 +33,11 @@ void print_usage()
         "   -c <var_count>    - the number of variables written in each "
         "iteration. Defaults to one\n"
         "   -t                - send server termination signal after reading "
-        "is complete\n"
-        "   -a                - ask dataspaces to allocate read data buffer\n");
+        "is complete\n");
 }
 
 int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
-               int *timestep, size_t *elem_size, int *num_vars, int *terminate,
-               int *allocate)
+               int *timestep, size_t *elem_size, int *num_vars, int *terminate)
 {
     char **argp;
     int i;
@@ -48,7 +46,6 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
     *num_vars = 1;
     *dims = 1;
     *terminate = 0;
-    *allocate = 0;
     if(argc > 1) {
         *dims = atoi(argv[1]);
     }
@@ -93,9 +90,6 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
         } else if(strcmp(*argp, "-t") == 0) {
             *terminate = 1;
             argp++;
-        } else if(strcmp(*argp, "-a") == 0) {
-            *allocate = 1;
-            argp++;
         } else {
             fprintf(stderr, "Unknown argument: %s\n", *argp);
             print_usage();
@@ -127,10 +121,9 @@ int main(int argc, char **argv)
     int num_vars;  // Optional: number of variables to be shared in the testing.
                    // Default value is 1.
     int terminate; // Optional: send terminate signal to server after read
-    int allocate;  // Optional: ask dataspaces to allocate receive buffer
 
     if(parse_args(argc, argv, &dims, np, sp, &timestep, &elem_size, &num_vars,
-                  &terminate, &allocate) != 0) {
+                  &terminate) != 0) {
         goto err_out;
     }
 
@@ -158,22 +151,22 @@ int main(int argc, char **argv)
 
     // Run as data reader
 
-    ret = test_get_run(dims, np, sp, timestep, elem_size, num_vars, terminate,
-                       allocate, gcomm);
+    ret = test_sub_run(dims, np, sp, timestep, elem_size, num_vars, terminate,
+                       gcomm);
 
     MPI_Barrier(gcomm);
     MPI_Finalize();
 
-    if(rank == 0) {
-        fprintf(stderr, "That's all from test_reader, folks!\n");
+    if(ret) {
+        goto err_out;
     }
 
-    if(ret != 0) {
-        goto err_out;
+    if(rank == 0) {
+        fprintf(stderr, "That's all from test_sub, folks!\n");
     }
 
     return ret;
 err_out:
-    fprintf(stderr, "test_reader rank %d has failed!\n", rank);
+    fprintf(stderr, "test_sub rank %d has failed!\n", rank);
     return -1;
 }

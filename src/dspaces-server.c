@@ -696,7 +696,10 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
 
     server->mid =
         margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
-    assert(server->mid);
+    if(!server->mid) {
+        fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
+        return(dspaces_ERR_MERCURY);
+    }
 
     server->listen_addr_str = strdup(listen_addr_str);
 
@@ -788,7 +791,10 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     }
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
-    assert(err == 0);
+    if(err) {
+        fprintf(stderr,"DATASPACES: ERROR: %s: could not allocate internal structures. (%d)\n", __func__, err);
+        return(dspaces_ERR_ALLOCATION);
+    }
 
     server->f_kill = server->dsg->num_apps;
 
@@ -920,7 +926,11 @@ static void put_rpc(hg_handle_t handle)
     }
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;    
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
@@ -1009,7 +1019,11 @@ static void put_local_rpc(hg_handle_t handle)
     }
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
@@ -1063,7 +1077,11 @@ static void put_meta_rpc(hg_handle_t handle)
     hg_bulk_t bulk_handle;
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     DEBUG_OUT("Received meta data of length %d, name '%s' version %d.\n",
               in.length, in.name, in.version);
@@ -1269,7 +1287,11 @@ static void query_rpc(hg_handle_t handle)
     info = margo_get_info(handle);
     server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     DEBUG_OUT("received query\n");
 
@@ -1304,7 +1326,11 @@ static void query_meta_rpc(hg_handle_t handle)
     info = margo_get_info(handle);
     server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS && "margo_get_input() succeeded");
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     DEBUG_OUT("received metadata query for version %d of '%s', mode %d.\n",
               in.version, in.name, in.mode);
@@ -1369,7 +1395,11 @@ static void get_rpc(hg_handle_t handle)
         (dspaces_provider_t)margo_registered_data(mid, info->id);
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
@@ -1433,7 +1463,11 @@ static void odsc_internal_rpc(hg_handle_t handle)
         (dspaces_provider_t)margo_registered_data(mid, info->id);
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
@@ -1506,7 +1540,11 @@ static void obj_update_rpc(hg_handle_t handle)
     DEBUG_OUT("Received rpc to update obj_dht\n");
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));

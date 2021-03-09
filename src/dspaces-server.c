@@ -48,11 +48,13 @@ struct dspaces_provider {
     hg_id_t query_id;
     hg_id_t query_meta_id;
     hg_id_t get_id;
+    hg_id_t get_local_id;
     hg_id_t obj_update_id;
     hg_id_t odsc_internal_id;
     hg_id_t ss_id;
     hg_id_t drain_id;
     hg_id_t kill_id;
+    hg_id_t kill_client_id;
     hg_id_t sub_id;
     hg_id_t notify_id;
     struct ds_gspace *dsg;
@@ -522,7 +524,7 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od,
                 dht_add_entry(ssd->ent_self, odsc);
                 break;
             case DS_OBJ_OWNER:
-                dht_update_owner(ssd->ent_self, odsc);
+                dht_update_owner(ssd->ent_self, odsc, 1);
                 break;
             default:
                 fprintf(stderr, "ERROR: (%s): unknown object update type.\n",
@@ -698,7 +700,7 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
     if(!server->mid) {
         fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
-        return(dspaces_ERR_MERCURY);
+        return (dspaces_ERR_MERCURY);
     }
 
     server->listen_addr_str = strdup(listen_addr_str);
@@ -718,6 +720,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         margo_registered_name(server->mid, "put_meta_rpc", &server->put_meta_id,
                               &flag);
         margo_registered_name(server->mid, "get_rpc", &server->get_id, &flag);
+        margo_registered_name(server->mid, "get_local_rpc",
+                              &server->get_local_id, &flag);
         margo_registered_name(server->mid, "query_rpc", &server->query_id,
                               &flag);
         margo_registered_name(server->mid, "query_meta_rpc",
@@ -730,6 +734,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         margo_registered_name(server->mid, "drain_rpc", &server->drain_id,
                               &flag);
         margo_registered_name(server->mid, "kill_rpc", &server->kill_id, &flag);
+        margo_registered_name(server->mid, "kill_client_rpc",
+                              &server->kill_client_id, &flag);
         margo_registered_name(server->mid, "sub_rpc", &server->sub_id, &flag);
         margo_registered_name(server->mid, "notify_rpc", &server->notify_id,
                               &flag);
@@ -749,6 +755,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
                             NULL);
         server->get_id = MARGO_REGISTER(server->mid, "get_rpc", bulk_in_t,
                                         bulk_out_t, get_rpc);
+        server->get_local_id = MARGO_REGISTER(server->mid, "get_local_rpc",
+                                              bulk_in_t, bulk_out_t, NULL);
         margo_register_data(server->mid, server->get_id, (void *)server, NULL);
         server->query_id = MARGO_REGISTER(server->mid, "query_rpc", odsc_gdim_t,
                                           odsc_list_t, query_rpc);
@@ -780,6 +788,11 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         margo_registered_disable_response(server->mid, server->kill_id,
                                           HG_TRUE);
         margo_register_data(server->mid, server->kill_id, (void *)server, NULL);
+        server->kill_client_id =
+            MARGO_REGISTER(server->mid, "kill_client_rpc", int32_t, void, NULL);
+        margo_registered_disable_response(server->mid, server->kill_client_id,
+                                          HG_TRUE);
+
         server->sub_id =
             MARGO_REGISTER(server->mid, "sub_rpc", odsc_gdim_t, void, sub_rpc);
         margo_register_data(server->mid, server->sub_id, (void *)server, NULL);
@@ -792,8 +805,11 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
     if(err) {
-        fprintf(stderr,"DATASPACES: ERROR: %s: could not allocate internal structures. (%d)\n", __func__, err);
-        return(dspaces_ERR_ALLOCATION);
+        fprintf(stderr,
+                "DATASPACES: ERROR: %s: could not allocate internal "
+                "structures. (%d)\n",
+                __func__, err);
+        return (dspaces_ERR_ALLOCATION);
     }
 
     server->f_kill = server->dsg->num_apps;
@@ -819,7 +835,7 @@ static void kill_client(dspaces_provider_t server, char *client_addr)
     int arg = -1;
 
     margo_addr_lookup(server->mid, client_addr, &server_addr);
-    margo_create(server->mid, server_addr, server->kill_id, &h);
+    margo_create(server->mid, server_addr, server->kill_client_id, &h);
     margo_forward(h, &arg);
     margo_addr_free(server->mid, server_addr);
     margo_destroy(h);
@@ -927,9 +943,12 @@ static void put_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
-        return;    
+        return;
     }
 
     obj_descriptor in_odsc;
@@ -1020,7 +1039,10 @@ static void put_local_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1078,7 +1100,10 @@ static void put_meta_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1288,7 +1313,10 @@ static void query_rpc(hg_handle_t handle)
     server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1327,7 +1355,10 @@ static void query_meta_rpc(hg_handle_t handle)
     server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1396,7 +1427,10 @@ static void get_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1464,7 +1498,10 @@ static void odsc_internal_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1541,7 +1578,10 @@ static void obj_update_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr,"DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return;
     }
@@ -1564,7 +1604,7 @@ static void obj_update_rpc(hg_handle_t handle)
         err = dht_add_entry(de, &in_odsc);
         break;
     case DS_OBJ_OWNER:
-        err = dht_update_owner(de, &in_odsc);
+        err = dht_update_owner(de, &in_odsc, 1);
         break;
     default:
         fprintf(stderr, "ERROR: (%s): unknown object update type.\n", __func__);

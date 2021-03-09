@@ -1523,7 +1523,7 @@ void dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc,
     *tab_entries += sub.pub_count;
 }
 
-int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc, int clear_flag)
 {
     obj_descriptor *old_odsc;
 
@@ -1536,6 +1536,9 @@ int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
         return (-ENOENT);
     }
     strcpy(old_odsc->owner, odsc->owner);
+    if(clear_flag) {
+        old_odsc->flags &= ~(DS_CLIENT_STORAGE);
+    }
 
     return 0;
 }

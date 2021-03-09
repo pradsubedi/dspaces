@@ -52,11 +52,13 @@ struct dspaces_client {
     hg_id_t put_local_id;
     hg_id_t put_meta_id;
     hg_id_t get_id;
+    hg_id_t get_local_id;
     hg_id_t query_id;
     hg_id_t query_meta_id;
     hg_id_t ss_id;
     hg_id_t drain_id;
     hg_id_t kill_id;
+    hg_id_t kill_client_id;
     hg_id_t sub_id;
     hg_id_t notify_id;
     struct dc_gspace *dcg;
@@ -82,12 +84,12 @@ struct dspaces_client {
     ABT_xstream listener_xs;
 };
 
-DECLARE_MARGO_RPC_HANDLER(get_rpc);
+DECLARE_MARGO_RPC_HANDLER(get_local_rpc);
 static void get_rpc(hg_handle_t h);
 DECLARE_MARGO_RPC_HANDLER(drain_rpc);
 static void drain_rpc(hg_handle_t h);
-DECLARE_MARGO_RPC_HANDLER(kill_rpc);
-static void kill_rpc(hg_handle_t h);
+DECLARE_MARGO_RPC_HANDLER(kill_client_rpc);
+static void kill_client_rpc(hg_handle_t h);
 DECLARE_MARGO_RPC_HANDLER(notify_rpc);
 static void notify_rpc(hg_handle_t h);
 
@@ -349,7 +351,7 @@ int dspaces_init(int rank, dspaces_client_t *c)
     client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 0, 0);
     if(!client->mid) {
         fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
-        return(dspaces_ERR_MERCURY);
+        return (dspaces_ERR_MERCURY);
     }
 
     free(listen_addr_str);
@@ -379,19 +381,22 @@ int dspaces_init(int rank, dspaces_client_t *c)
         margo_registered_name(client->mid, "put_meta_rpc", &client->put_meta_id,
                               &flag);
         margo_registered_name(client->mid, "get_rpc", &client->get_id, &flag);
+        margo_registered_name(client->mid, "get_local_id",
+                              &client->get_local_id, &flag);
         margo_registered_name(client->mid, "query_rpc", &client->query_id,
                               &flag);
         margo_registered_name(client->mid, "ss_rpc", &client->ss_id, &flag);
         margo_registered_name(client->mid, "drain_rpc", &client->drain_id,
                               &flag);
         margo_registered_name(client->mid, "kill_rpc", &client->kill_id, &flag);
+        margo_registered_name(client->mid, "kill_client_rpc",
+                              &client->kill_client_id, &flag);
         margo_registered_name(client->mid, "sub_rpc", &client->sub_id, &flag);
         margo_registered_name(client->mid, "notify_rpc", &client->notify_id,
                               &flag);
         margo_registered_name(client->mid, "query_meta_rpc",
                               &client->query_meta_id, &flag);
     } else {
-
         client->put_id = MARGO_REGISTER(client->mid, "put_rpc", bulk_gdim_t,
                                         bulk_out_t, NULL);
         client->put_local_id = MARGO_REGISTER(client->mid, "put_local_rpc",
@@ -400,9 +405,13 @@ int dspaces_init(int rank, dspaces_client_t *c)
                                              put_meta_in_t, bulk_out_t, NULL);
         margo_register_data(client->mid, client->put_meta_id, (void *)client,
                             NULL);
-        client->get_id = MARGO_REGISTER(client->mid, "get_rpc", bulk_in_t,
-                                        bulk_out_t, get_rpc);
+        client->get_id =
+            MARGO_REGISTER(client->mid, "get_rpc", bulk_in_t, bulk_out_t, NULL);
         margo_register_data(client->mid, client->get_id, (void *)client, NULL);
+        client->get_local_id = MARGO_REGISTER(
+            client->mid, "get_local_rpc", bulk_in_t, bulk_out_t, get_local_rpc);
+        margo_register_data(client->mid, client->get_local_id, (void *)client,
+                            NULL);
         client->query_id = MARGO_REGISTER(client->mid, "query_rpc", odsc_gdim_t,
                                           odsc_list_t, NULL);
         client->query_meta_id =
@@ -415,10 +424,16 @@ int dspaces_init(int rank, dspaces_client_t *c)
         margo_register_data(client->mid, client->drain_id, (void *)client,
                             NULL);
         client->kill_id =
-            MARGO_REGISTER(client->mid, "kill_rpc", int32_t, void, kill_rpc);
+            MARGO_REGISTER(client->mid, "kill_rpc", int32_t, void, NULL);
         margo_registered_disable_response(client->mid, client->kill_id,
                                           HG_TRUE);
         margo_register_data(client->mid, client->kill_id, (void *)client, NULL);
+        client->kill_client_id = MARGO_REGISTER(client->mid, "kill_client_rpc",
+                                                int32_t, void, kill_client_rpc);
+        margo_registered_disable_response(client->mid, client->kill_client_id,
+                                          HG_TRUE);
+        margo_register_data(client->mid, client->kill_client_id, (void *)client,
+                            NULL);
         client->sub_id =
             MARGO_REGISTER(client->mid, "sub_rpc", odsc_gdim_t, void, NULL);
         margo_registered_disable_response(client->mid, client->sub_id, HG_TRUE);
@@ -505,8 +520,8 @@ void dspaces_define_gdim(dspaces_client_t client, const char *var_name,
                          int ndim, uint64_t *gdim)
 {
     if(ndim > BBOX_MAX_NDIM) {
-        fprintf(stderr, "ERROR: %s: maximum object dimensionality is %d\n", __func__,
-                BBOX_MAX_NDIM);
+        fprintf(stderr, "ERROR: %s: maximum object dimensionality is %d\n",
+                __func__, BBOX_MAX_NDIM);
     } else {
         update_gdim_list(&(client->dcg->gdim_list), var_name, ndim, gdim);
     }
@@ -524,6 +539,7 @@ int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
     obj_descriptor odsc = {.version = ver,
                            .owner = {0},
                            .st = st,
+                           .flags = 0,
                            .size = elem_size,
                            .bb = {
                                .num_dims = ndim,
@@ -621,8 +637,14 @@ static int get_data(dspaces_client_t client, int num_odscs,
         margo_addr_lookup(client->mid, odsc_tab[i].owner, &server_addr);
 
         hg_handle_t handle;
-        margo_create(client->mid, server_addr, client->get_id, &handle);
-
+        if(odsc_tab[i].flags & DS_CLIENT_STORAGE) {
+            DEBUG_OUT("retrieving object from client-local storage.\n");
+            margo_create(client->mid, server_addr, client->get_local_id,
+                         &handle);
+        } else {
+            DEBUG_OUT("retrieving object from server storage.\n");
+            margo_create(client->mid, server_addr, client->get_id, &handle);
+        }
         margo_request req;
         // forward get requests
         margo_iforward(handle, &in[i], &req);
@@ -669,8 +691,7 @@ static int dspaces_init_listener(dspaces_client_t client)
     if(ret != ABT_SUCCESS) {
         char err_str[1000];
         ABT_error_get_str(ret, err_str, NULL);
-        fprintf(stderr,
-                "ERROR: %s: could not launch handler thread: %s\n",
+        fprintf(stderr, "ERROR: %s: could not launch handler thread: %s\n",
                 __func__, err_str);
         return (dspaces_ERR_ARGOBOTS);
     }
@@ -760,6 +781,7 @@ int dspaces_put_local(dspaces_client_t client, const char *var_name,
 
     obj_descriptor odsc = {.version = ver,
                            .st = st,
+                           .flags = DS_CLIENT_STORAGE,
                            .size = elem_size,
                            .bb = {
                                .num_dims = ndim,
@@ -857,20 +879,23 @@ static int get_odscs(dspaces_client_t client, obj_descriptor *odsc, int timeout,
 
     hret = margo_create(client->mid, server_addr, client->query_id, &handle);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_create() failed with %d.\n", __func__, hret);
-        return(0);
+        fprintf(stderr, "ERROR: %s: margo_create() failed with %d.\n", __func__,
+                hret);
+        return (0);
     }
     hret = margo_forward(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_forward() failed with %d.\n", __func__, hret);
+        fprintf(stderr, "ERROR: %s: margo_forward() failed with %d.\n",
+                __func__, hret);
         margo_destroy(handle);
-        return(0);
+        return (0);
     }
     hret = margo_get_output(handle, &out);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_get_output() failed with %d.\n", __func__, hret);
+        fprintf(stderr, "ERROR: %s: margo_get_output() failed with %d.\n",
+                __func__, hret);
         margo_destroy(handle);
-        return(0);
+        return (0);
     }
 
     num_odscs = (out.odsc_list.size) / sizeof(obj_descriptor);
@@ -986,17 +1011,20 @@ int dspaces_get_meta(dspaces_client_t client, char *name, int mode, int current,
     hret =
         margo_create(client->mid, server_addr, client->query_meta_id, &handle);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_create() failed with %d.\n", __func__, hret);
+        fprintf(stderr, "ERROR: %s: margo_create() failed with %d.\n", __func__,
+                hret);
         goto err_hg;
     }
     hret = margo_forward(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_forward() failed with %d.\n", __func__, hret);
+        fprintf(stderr, "ERROR: %s: margo_forward() failed with %d.\n",
+                __func__, hret);
         goto err_hg_handle;
     }
     hret = margo_get_output(handle, &out);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_get_output() failed with %d.\n", __func__, hret);
+        fprintf(stderr, "ERROR: %s: margo_get_output() failed with %d.\n",
+                __func__, hret);
         goto err_hg_output;
     }
 
@@ -1008,15 +1036,16 @@ int dspaces_get_meta(dspaces_client_t client, char *name, int mode, int current,
         hret = margo_bulk_create(client->mid, 1, data, &out.size,
                                  HG_BULK_WRITE_ONLY, &bulk_handle);
         if(hret != HG_SUCCESS) {
-            fprintf(stderr, "ERROR: %s: margo_bulk_create() failed with %d.\n", __func__,
-                    hret);
+            fprintf(stderr, "ERROR: %s: margo_bulk_create() failed with %d.\n",
+                    __func__, hret);
             goto err_free;
         }
         hret = margo_bulk_transfer(client->mid, HG_BULK_PULL, server_addr,
                                    out.handle, 0, bulk_handle, 0, out.size);
         if(hret != HG_SUCCESS) {
-            fprintf(stderr, "ERROR: %s: margo_bulk_transfer() failed with %d.\n", __func__,
-                    hret);
+            fprintf(stderr,
+                    "ERROR: %s: margo_bulk_transfer() failed with %d.\n",
+                    __func__, hret);
             goto err_bulk;
         }
         DEBUG_OUT("metadata for '%s', version %d retrieved successfully.\n",
@@ -1048,7 +1077,7 @@ err_hg:
     return dspaces_ERR_MERCURY;
 }
 
-static void get_rpc(hg_handle_t handle)
+static void get_local_rpc(hg_handle_t handle)
 {
     hg_return_t hret;
     bulk_in_t in;
@@ -1065,7 +1094,10 @@ static void get_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s. margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s. margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         return;
     }
 
@@ -1078,16 +1110,22 @@ static void get_rpc(hg_handle_t handle)
 
     from_obj = ls_find(client->dcg->ls, &in_odsc);
     if(!from_obj)
-        fprintf(stderr, "DATASPACES: WARNING handling %s: Object not found in local storage\n",
+        fprintf(stderr,
+                "DATASPACES: WARNING handling %s: Object not found in local "
+                "storage\n",
                 __func__);
 
     od = obj_data_alloc(&in_odsc);
     if(!od)
-        fprintf(stderr, "DATASPACES: ERROR handling %s: object allocation failed\n", __func__);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: object allocation failed\n",
+                __func__);
 
     if(from_obj->data == NULL)
-        fprintf(stderr, "DATASPACES: ERROR handling %s: object data allocation failed\n",
-                __func__);
+        fprintf(
+            stderr,
+            "DATASPACES: ERROR handling %s: object data allocation failed\n",
+            __func__);
 
     ssd_copy(od, from_obj);
     DEBUG_OUT("After ssd_copy\n");
@@ -1099,7 +1137,9 @@ static void get_rpc(hg_handle_t handle)
                              &bulk_handle);
 
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s: margo_bulk_create() failed\n", __func__);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_bulk_create() failed\n",
+                __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -1110,7 +1150,9 @@ static void get_rpc(hg_handle_t handle)
     hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
                                bulk_handle, 0, size);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s: margo_bulk_transfer() failed (%d)\n",
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_bulk_transfer() failed "
+                "(%d)\n",
                 __func__, hret);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
@@ -1126,7 +1168,7 @@ static void get_rpc(hg_handle_t handle)
     margo_free_input(handle, &in);
     margo_destroy(handle);
 }
-DEFINE_MARGO_RPC_HANDLER(get_rpc)
+DEFINE_MARGO_RPC_HANDLER(get_local_rpc)
 
 static void drain_rpc(hg_handle_t handle)
 {
@@ -1145,7 +1187,10 @@ static void drain_rpc(hg_handle_t handle)
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s: margo_get_input() failed with %d.\n", __func__, hret);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
         return;
     }
 
@@ -1158,9 +1203,11 @@ static void drain_rpc(hg_handle_t handle)
 
     from_obj = ls_find(client->dcg->ls, &in_odsc);
     if(!from_obj) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s:" 
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s:"
                 "Object not found in client's local storage.\n Make sure MAX "
-                "version is set appropriately in dataspaces.conf\n", __func__);
+                "version is set appropriately in dataspaces.conf\n",
+                __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         return;
@@ -1173,7 +1220,9 @@ static void drain_rpc(hg_handle_t handle)
                              &bulk_handle);
 
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s: margo_bulk_create() failed\n", __func__);
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_bulk_create() failed\n",
+                __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
         margo_free_input(handle, &in);
@@ -1184,7 +1233,8 @@ static void drain_rpc(hg_handle_t handle)
     hret = margo_bulk_transfer(mid, HG_BULK_PUSH, info->addr, in.handle, 0,
                                bulk_handle, 0, size);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "DATASPACES: ERROR handling %s: margo_bulk_transfer() failed\n",
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_bulk_transfer() failed\n",
                 __func__);
         out.ret = dspaces_ERR_MERCURY;
         margo_respond(handle, &out);
@@ -1449,12 +1499,14 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
 
     hret = margo_create(client->mid, server_addr, client->sub_id, &handle);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_create() failed with %d.\n", __func__, hret);
-        return(DSPACES_SUB_FAIL);            
+        fprintf(stderr, "ERROR: %s: margo_create() failed with %d.\n", __func__,
+                hret);
+        return (DSPACES_SUB_FAIL);
     }
     hret = margo_forward(handle, &in);
     if(hret != HG_SUCCESS) {
-        fprintf(stderr, "ERROR: %s: margo_forward() failed with %d.\n", __func__, hret);
+        fprintf(stderr, "ERROR: %s: margo_forward() failed with %d.\n",
+                __func__, hret);
         margo_destroy(handle);
         return (DSPACES_SUB_FAIL);
     }
@@ -1462,7 +1514,7 @@ struct dspaces_sub_handle *dspaces_sub(dspaces_client_t client,
     DEBUG_OUT("subscription %d sent.\n", subh->id);
     subh->status = DSPACES_SUB_WAIT;
 
-    margo_addr_free(client->mid, server_addr); 
+    margo_addr_free(client->mid, server_addr);
     margo_destroy(handle);
 
     return (subh);
@@ -1473,7 +1525,8 @@ int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait,
 {
     if(subh == DSPACES_SUB_FAIL) {
         fprintf(stderr,
-                "WARNING: %s: status check on invalid subscription handle.\n", __func__);
+                "WARNING: %s: status check on invalid subscription handle.\n",
+                __func__);
         return DSPACES_SUB_INVALID;
     }
 
@@ -1496,7 +1549,7 @@ int dspaces_check_sub(dspaces_client_t client, dspaces_sub_t subh, int wait,
     return (subh->status);
 }
 
-static void kill_rpc(hg_handle_t handle)
+static void kill_client_rpc(hg_handle_t handle)
 {
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
     const struct hg_info *info = margo_get_info(handle);
@@ -1512,7 +1565,7 @@ static void kill_rpc(hg_handle_t handle)
 
     margo_destroy(handle);
 }
-DEFINE_MARGO_RPC_HANDLER(kill_rpc)
+DEFINE_MARGO_RPC_HANDLER(kill_client_rpc)
 
 int dspaces_cancel_sub(dspaces_client_t client, dspaces_sub_t subh)
 {

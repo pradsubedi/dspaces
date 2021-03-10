@@ -5,6 +5,7 @@
  * See COPYRIGHT in top-level directory.
  */
 #include "dspaces.h"
+#include "dspacesp.h"
 #include "gspace.h"
 #include "ss_data.h"
 #include <errno.h>
@@ -327,6 +328,16 @@ int dspaces_init(int rank, dspaces_client_t *c)
 {
     char *listen_addr_str;
     const char *envdebug = getenv("DSPACES_DEBUG");
+    hg_class_t *hg;
+    static int is_initialized = 0;
+
+    if(is_initialized) {
+        fprintf(stderr,
+                "DATASPACES: WARNING: %s: multiple instantiations of the "
+                "dataspaces client are not supported.\n",
+                __func__);
+        return (dspaces_ERR_ALLOCATION);
+    }
     dspaces_client_t client = (dspaces_client_t)calloc(1, sizeof(*client));
     if(!client)
         return dspaces_ERR_ALLOCATION;
@@ -353,6 +364,8 @@ int dspaces_init(int rank, dspaces_client_t *c)
         fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
         return (dspaces_ERR_MERCURY);
     }
+
+    hg = margo_get_class(client->mid);
 
     free(listen_addr_str);
 
@@ -381,19 +394,25 @@ int dspaces_init(int rank, dspaces_client_t *c)
         margo_registered_name(client->mid, "put_meta_rpc", &client->put_meta_id,
                               &flag);
         margo_registered_name(client->mid, "get_rpc", &client->get_id, &flag);
-        margo_registered_name(client->mid, "get_local_id",
+        margo_registered_name(client->mid, "get_local_rpc",
                               &client->get_local_id, &flag);
+        DS_HG_REGISTER(hg, client->get_local_id, bulk_in_t, bulk_out_t,
+                       get_local_rpc);
         margo_registered_name(client->mid, "query_rpc", &client->query_id,
                               &flag);
         margo_registered_name(client->mid, "ss_rpc", &client->ss_id, &flag);
         margo_registered_name(client->mid, "drain_rpc", &client->drain_id,
                               &flag);
+        DS_HG_REGISTER(hg, client->drain_id, bulk_in_t, bulk_out_t, drain_rpc);
         margo_registered_name(client->mid, "kill_rpc", &client->kill_id, &flag);
         margo_registered_name(client->mid, "kill_client_rpc",
                               &client->kill_client_id, &flag);
+        DS_HG_REGISTER(hg, client->kill_client_id, int32_t, void,
+                       kill_client_rpc);
         margo_registered_name(client->mid, "sub_rpc", &client->sub_id, &flag);
         margo_registered_name(client->mid, "notify_rpc", &client->notify_id,
                               &flag);
+        DS_HG_REGISTER(hg, client->notify_id, odsc_list_t, void, notify_rpc);
         margo_registered_name(client->mid, "query_meta_rpc",
                               &client->query_meta_id, &flag);
     } else {
@@ -454,6 +473,8 @@ int dspaces_init(int rank, dspaces_client_t *c)
     client->f_final = 0;
 
     *c = client;
+
+    is_initialized = 1;
 
     return dspaces_SUCCESS;
 }

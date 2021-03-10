@@ -6,6 +6,7 @@
  */
 #include "dspaces-server.h"
 #include "dspaces.h"
+#include "dspacesp.h"
 #include "gspace.h"
 #include "ss_data.h"
 #include <abt.h>
@@ -672,10 +673,20 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     const char *envnthreads = getenv("DSPACES_NUM_HANDLERS");
     const char *envdrain = getenv("DSPACES_DRAIN");
     dspaces_provider_t server;
+    hg_class_t *hg;
+    static int is_initialized = 0;
     hg_bool_t flag;
     hg_id_t id;
     int num_handlers = DSPACES_DEFAULT_NUM_HANDLERS;
     int ret;
+
+    if(is_initialized) {
+        fprintf(stderr,
+                "DATASPACES: WARNING: %s: multiple instantiations of the "
+                "dataspaces server is not supported.\n",
+                __func__);
+        return (dspaces_ERR_ALLOCATION);
+    }
 
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
     if(server == NULL)
@@ -711,32 +722,52 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     ret = ABT_mutex_create(&server->sspace_mutex);
     ret = ABT_mutex_create(&server->kill_mutex);
 
+    hg = margo_get_class(server->mid);
+
     margo_registered_name(server->mid, "put_rpc", &id, &flag);
 
     if(flag == HG_TRUE) { /* RPCs already registered */
+        DEBUG_OUT("RPC names already registered. Setting handlers...\n");
         margo_registered_name(server->mid, "put_rpc", &server->put_id, &flag);
+        DS_HG_REGISTER(hg, server->put_id, bulk_gdim_t, bulk_out_t, put_rpc);
         margo_registered_name(server->mid, "put_local_rpc",
                               &server->put_local_id, &flag);
+        DS_HG_REGISTER(hg, server->put_local_id, odsc_gdim_t, bulk_out_t,
+                       put_local_rpc);
         margo_registered_name(server->mid, "put_meta_rpc", &server->put_meta_id,
                               &flag);
+        DS_HG_REGISTER(hg, server->put_meta_id, put_meta_in_t, bulk_out_t,
+                       put_meta_rpc);
         margo_registered_name(server->mid, "get_rpc", &server->get_id, &flag);
+        DS_HG_REGISTER(hg, server->get_id, bulk_in_t, bulk_out_t, get_rpc);
         margo_registered_name(server->mid, "get_local_rpc",
                               &server->get_local_id, &flag);
         margo_registered_name(server->mid, "query_rpc", &server->query_id,
                               &flag);
+        DS_HG_REGISTER(hg, server->query_id, odsc_gdim_t, odsc_list_t,
+                       query_rpc);
         margo_registered_name(server->mid, "query_meta_rpc",
                               &server->query_meta_id, &flag);
+        DS_HG_REGISTER(hg, server->query_meta_id, query_meta_in_t,
+                       query_meta_out_t, query_meta_rpc);
         margo_registered_name(server->mid, "obj_update_rpc",
                               &server->obj_update_id, &flag);
+        DS_HG_REGISTER(hg, server->obj_update_id, odsc_gdim_t, void,
+                       obj_update_rpc);
         margo_registered_name(server->mid, "odsc_internal_rpc",
                               &server->odsc_internal_id, &flag);
+        DS_HG_REGISTER(hg, server->odsc_internal_id, odsc_gdim_t, odsc_list_t,
+                       odsc_internal_rpc);
         margo_registered_name(server->mid, "ss_rpc", &server->ss_id, &flag);
+        DS_HG_REGISTER(hg, server->ss_id, void, ss_information, ss_rpc);
         margo_registered_name(server->mid, "drain_rpc", &server->drain_id,
                               &flag);
         margo_registered_name(server->mid, "kill_rpc", &server->kill_id, &flag);
+        DS_HG_REGISTER(hg, server->kill_id, int32_t, void, kill_rpc);
         margo_registered_name(server->mid, "kill_client_rpc",
                               &server->kill_client_id, &flag);
         margo_registered_name(server->mid, "sub_rpc", &server->sub_id, &flag);
+        DS_HG_REGISTER(hg, server->sub_id, odsc_gdim_t, void, sub_rpc);
         margo_registered_name(server->mid, "notify_rpc", &server->notify_id,
                               &flag);
     } else {
@@ -824,6 +855,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     }
 
     *sv = server;
+
+    is_initialized = 1;
 
     return dspaces_SUCCESS;
 }

@@ -100,4 +100,12 @@ elif [ $1 -eq 8 ]; then
         fi
         wait $serverproc || exit 1
         wait $writerproc
+elif [ $1 -eq 9 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer_server sockets 1 1 64 5 -s 8 -m $storage_mode -t &
+        wsproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $wsproc
 fi

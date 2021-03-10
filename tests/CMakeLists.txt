@@ -1,5 +1,5 @@
-add_executable(dspaces_server server.c ../src/dspaces-server.c)
-target_link_libraries(dspaces_server dspaces)
+add_executable(dspaces_server server.c)
+target_link_libraries(dspaces_server dspaces dspaces-server)
 
 add_executable(test_reader test_reader.c test_get_run.c timer.c)
 target_link_libraries(test_reader dspaces)
@@ -18,6 +18,9 @@ target_link_libraries(test_reader_f dspaces_fortran)
 
 add_executable(test_sub test_sub.c test_sub_run.c timer.c)
 target_link_libraries(test_sub dspaces)
+
+add_executable(test_writer_server test_writer_server.c test_put_run.c timer.c)
+target_link_libraries(test_writer_server dspaces dspaces-server)
 
 install(TARGETS dspaces_server terminator
   DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -58,4 +61,8 @@ if (BASH_PROGRAM)
   set_tests_properties(Test_read_alloc PROPERTIES TIMEOUT 30)
   add_test (Test_read_alloc_local ${BASH_PROGRAM} test_script.sh 8 local)
   set_tests_properties(Test_read_alloc_local PROPERTIES TIMEOUT 30)
+  add_test (Test_write_server ${BASH_PROGRAM} test_script.sh 9)
+  set_tests_properties(Test_write_server PROPERTIES TIMEOUT 30) 
+  add_test (Test_write_server_local ${BASH_PROGRAM} test_script.sh 9 local)
+  set_tests_properties(Test_write_server_local PROPERTIES TIMEOUT 30)
 endif (BASH_PROGRAM)

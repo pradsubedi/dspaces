@@ -707,6 +707,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     MPI_Comm_dup(comm, &server->comm);
     MPI_Comm_rank(comm, &server->rank);
 
+    ABT_init(0, NULL);
+
     server->mid =
         margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
     if(!server->mid) {

@@ -19,12 +19,18 @@ rm -rf conf.ds
 if [ $1 -eq 1 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
         serverproc=$!
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer 1 1 64 5 -s 8 -m $storage_mode -t
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 test_writer 1 1 64 5 -s 8 -m $storage_mode -t &
+        wproc=$!
         if [ $? != 0 ] ; then
             exit 1
         fi
-        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator
-        wait $serverproc
+        #if [ "$storage_mode" == "local" ] ; then
+        #    @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 terminator
+        #else
+            @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 1 terminator
+        #fi
+        wait $serverproc || exit 1
+        wait $wproc
 elif [ $1 -eq 2 ]; then
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
         serverproc=$!
@@ -108,4 +114,12 @@ elif [ $1 -eq 9 ]; then
             exit 1
         fi
         wait $wsproc
+elif [ $1 -eq 10 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_writer_server sockets 1 2 64 5 -s 8 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -s 8 -t
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $writerproc
 fi

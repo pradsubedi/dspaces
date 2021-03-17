@@ -148,6 +148,7 @@ int main(int argc, char **argv)
     gcomm = MPI_COMM_WORLD;
 
     color = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_split(MPI_COMM_WORLD, color, rank, &gcomm);
     MPI_Comm_size(gcomm, &nprocs);
     MPI_Comm_rank(gcomm, &rank);

@@ -60,6 +60,7 @@ struct dspaces_provider {
     hg_id_t notify_id;
     struct ds_gspace *dsg;
     char **server_address;
+    char **node_names;
     char *listen_addr_str;
     int rank;
     int comm_size;
@@ -250,12 +251,14 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
 {
     hg_addr_t my_addr = HG_ADDR_NULL;
     char *my_addr_str = NULL;
+    char my_node_str[HOST_NAME_MAX];
     hg_size_t my_addr_size = 0;
-    int *addr_sizes;
+    int my_node_name_len = 0;
+    int *str_sizes;
     hg_return_t hret = HG_SUCCESS;
-    int addr_buf_size = 0;
+    int buf_size = 0;
     int *sizes_psum;
-    char *addr_str_buf;
+    char *str_buf;
     FILE *fd;
     int i, ret;
 
@@ -286,24 +289,45 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
     }
 
     MPI_Comm_size(comm, &server->comm_size);
-    addr_sizes = malloc(server->comm_size * sizeof(*addr_sizes));
+    str_sizes = malloc(server->comm_size * sizeof(*str_sizes));
     sizes_psum = malloc(server->comm_size * sizeof(*sizes_psum));
-    MPI_Allgather(&my_addr_size, 1, MPI_INT, addr_sizes, 1, MPI_INT, comm);
+    MPI_Allgather(&my_addr_size, 1, MPI_INT, str_sizes, 1, MPI_INT, comm);
     sizes_psum[0] = 0;
     for(i = 0; i < server->comm_size; i++) {
-        addr_buf_size += addr_sizes[i];
+        buf_size += str_sizes[i];
         if(i) {
-            sizes_psum[i] = sizes_psum[i - 1] + addr_sizes[i - 1];
+            sizes_psum[i] = sizes_psum[i - 1] + str_sizes[i - 1];
         }
     }
-    addr_str_buf = malloc(addr_buf_size);
-    MPI_Allgatherv(my_addr_str, my_addr_size, MPI_CHAR, addr_str_buf,
-                   addr_sizes, sizes_psum, MPI_CHAR, comm);
+    str_buf = malloc(buf_size);
+    MPI_Allgatherv(my_addr_str, my_addr_size, MPI_CHAR, str_buf, str_sizes,
+                   sizes_psum, MPI_CHAR, comm);
 
     server->server_address =
         malloc(server->comm_size * sizeof(*server->server_address));
     for(i = 0; i < server->comm_size; i++) {
-        server->server_address[i] = &addr_str_buf[sizes_psum[i]];
+        server->server_address[i] = &str_buf[sizes_psum[i]];
+    }
+
+    gethostname(my_node_str, HOST_NAME_MAX);
+    my_node_str[HOST_NAME_MAX - 1] = '\0';
+    my_node_name_len = strlen(my_node_str) + 1;
+    MPI_Allgather(&my_node_name_len, 1, MPI_INT, str_sizes, 1, MPI_INT, comm);
+    sizes_psum[0] = 0;
+    buf_size = 0;
+    for(i = 0; i < server->comm_size; i++) {
+        buf_size += str_sizes[i];
+        if(i) {
+            sizes_psum[i] = sizes_psum[i - 1] + str_sizes[i - 1];
+        }
+    }
+    str_buf = malloc(buf_size);
+    MPI_Allgatherv(my_node_str, my_node_name_len, MPI_CHAR, str_buf, str_sizes,
+                   sizes_psum, MPI_CHAR, comm);
+    server->node_names =
+        malloc(server->comm_size * sizeof(*server->node_names));
+    for(i = 0; i < server->comm_size; i++) {
+        server->node_names[i] = &str_buf[sizes_psum[i]];
     }
 
     MPI_Comm_rank(comm, &server->rank);
@@ -318,14 +342,15 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
         }
         fprintf(fd, "%d\n", server->comm_size);
         for(i = 0; i < server->comm_size; i++) {
-            fprintf(fd, "%s\n", server->server_address[i]);
+            fprintf(fd, "%s %s\n", server->node_names[i],
+                    server->server_address[i]);
         }
         fprintf(fd, "%s\n", server->listen_addr_str);
         fclose(fd);
     }
 
     free(my_addr_str);
-    free(addr_sizes);
+    free(str_sizes);
     free(sizes_psum);
     margo_addr_free(server->mid, my_addr);
 
@@ -929,10 +954,7 @@ static int server_destroy(dspaces_provider_t server)
     int i;
 
     MPI_Barrier(server->comm);
-    if(server->rank == 0) {
-        fprintf(stderr,
-                "Finishing up, waiting for asynchronous jobs to finish...\n");
-    }
+    DEBUG_OUT("Finishing up, waiting for asynchronous jobs to finish...\n");
 
     if(server->f_drain) {
         ABT_thread_free(&server->drain_t);
@@ -952,9 +974,7 @@ static int server_destroy(dspaces_provider_t server)
 
     MPI_Barrier(server->comm);
     MPI_Comm_free(&server->comm);
-    if(server->rank == 0) {
-        fprintf(stderr, "Finalizing servers.\n");
-    }
+    DEBUG_OUT("finalizing server.\n");
     margo_finalize(server->mid);
 }
 

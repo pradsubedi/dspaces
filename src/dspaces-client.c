@@ -64,6 +64,9 @@ struct dspaces_client {
     hg_id_t notify_id;
     struct dc_gspace *dcg;
     char **server_address;
+    char **node_names;
+    char my_node_name[HOST_NAME_MAX];
+    int my_server;
     int size_sp;
     int rank;
     int local_put_count; // used during finalize
@@ -99,10 +102,8 @@ static void notify_rpc(hg_handle_t h);
 static hg_return_t get_server_address(dspaces_client_t client,
                                       hg_addr_t *server_addr)
 {
-    int peer_id = client->rank % client->size_sp;
-
-    return (margo_addr_lookup(client->mid, client->server_address[peer_id],
-                              server_addr));
+    return (margo_addr_lookup(
+        client->mid, client->server_address[client->my_server], server_addr));
 }
 
 static hg_return_t get_meta_server_address(dspaces_client_t client,
@@ -110,6 +111,38 @@ static hg_return_t get_meta_server_address(dspaces_client_t client,
 {
     return (
         margo_addr_lookup(client->mid, client->server_address[0], server_addr));
+}
+
+static void choose_server(dspaces_client_t client)
+{
+    int match_count = 0;
+    int i;
+
+    for(i = 0; i < client->size_sp; i++) {
+        if(strcmp(client->my_node_name, client->node_names[i]) == 0) {
+            match_count++;
+        }
+    }
+    if(match_count) {
+        DEBUG_OUT("found %i servers that share a node with me.\n", match_count);
+        match_count = client->rank % match_count;
+        for(i = 0; i < client->size_sp; i++) {
+            if(strcmp(client->my_node_name, client->node_names[i]) == 0) {
+                if(match_count == 0) {
+                    DEBUG_OUT("Attaching to server %i.\n", i);
+                    client->my_server = i;
+                    break;
+                }
+                match_count--;
+            }
+        }
+    } else {
+        client->my_server = client->rank % client->size_sp;
+        DEBUG_OUT(
+            "No on-node servers found. Attaching round-robin to server %i.\n",
+            client->my_server);
+        return;
+    }
 }
 
 static int get_ss_info(dspaces_client_t client)
@@ -305,12 +338,15 @@ static int read_conf(dspaces_client_t client, char **listen_addr_str)
     fscanf(fd, "%d\n", &client->size_sp);
     client->server_address =
         malloc(client->size_sp * sizeof(*client->server_address));
+    client->node_names = malloc(client->size_sp * sizeof(*client->node_names));
     for(i = 0; i < client->size_sp; i++) {
         fgetpos(fd, &lstart);
+        fscanf(fd, "%*s%n", &size);
+        client->node_names[i] = malloc(size + 1);
         fscanf(fd, "%*s%n\n", &size);
-        fsetpos(fd, &lstart);
         client->server_address[i] = malloc(size + 1);
-        fscanf(fd, "%s\n", client->server_address[i]);
+        fsetpos(fd, &lstart);
+        fscanf(fd, "%s %s\n", client->node_names[i], client->server_address[i]);
     }
     fgetpos(fd, &lstart);
     fscanf(fd, "%*s%n\n", &size);
@@ -356,6 +392,9 @@ int dspaces_init(int rank, dspaces_client_t *c)
         return dspaces_ERR_ALLOCATION;
 
     read_conf(client, &listen_addr_str);
+    gethostname(client->my_node_name, HOST_NAME_MAX);
+
+    choose_server(client);
 
     ABT_init(0, NULL);
 

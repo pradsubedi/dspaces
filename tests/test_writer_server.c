@@ -171,9 +171,15 @@ int main(int argc, char **argv)
     test_put_run(dims, np, sp, timestep, elem_size, num_vars, local_mode,
                  terminate, gcomm);
 
+    MPI_Barrier(gcomm);
+    if(rank == 0) {
+        fprintf(stderr, "Writer is all done!\n");
+    }
+
     // make margo wait for finalize
     dspaces_server_fini(s);
 
+    MPI_Barrier(gcomm);
     if(rank == 0) {
         fprintf(stderr, "Server is all done!\n");
     }

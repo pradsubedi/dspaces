@@ -566,11 +566,6 @@ int dspaces_fini(dspaces_client_t client)
 
     margo_finalize(client->mid);
 
-    if(client->listener_init) {
-        ABT_xstream_join(client->listener_xs);
-        ABT_xstream_free(&client->listener_xs);
-    }
-
     free(client);
 
     return dspaces_SUCCESS;

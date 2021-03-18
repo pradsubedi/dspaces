@@ -6,6 +6,7 @@
  */
 #include "dspaces-server.h"
 #include "dspaces.h"
+#include "dspacesp.h"
 #include "gspace.h"
 #include "ss_data.h"
 #include <abt.h>
@@ -48,15 +49,18 @@ struct dspaces_provider {
     hg_id_t query_id;
     hg_id_t query_meta_id;
     hg_id_t get_id;
+    hg_id_t get_local_id;
     hg_id_t obj_update_id;
     hg_id_t odsc_internal_id;
     hg_id_t ss_id;
     hg_id_t drain_id;
     hg_id_t kill_id;
+    hg_id_t kill_client_id;
     hg_id_t sub_id;
     hg_id_t notify_id;
     struct ds_gspace *dsg;
     char **server_address;
+    char **node_names;
     char *listen_addr_str;
     int rank;
     int comm_size;
@@ -247,12 +251,14 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
 {
     hg_addr_t my_addr = HG_ADDR_NULL;
     char *my_addr_str = NULL;
+    char my_node_str[HOST_NAME_MAX];
     hg_size_t my_addr_size = 0;
-    int *addr_sizes;
+    int my_node_name_len = 0;
+    int *str_sizes;
     hg_return_t hret = HG_SUCCESS;
-    int addr_buf_size = 0;
+    int buf_size = 0;
     int *sizes_psum;
-    char *addr_str_buf;
+    char *str_buf;
     FILE *fd;
     int i, ret;
 
@@ -283,24 +289,45 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
     }
 
     MPI_Comm_size(comm, &server->comm_size);
-    addr_sizes = malloc(server->comm_size * sizeof(*addr_sizes));
+    str_sizes = malloc(server->comm_size * sizeof(*str_sizes));
     sizes_psum = malloc(server->comm_size * sizeof(*sizes_psum));
-    MPI_Allgather(&my_addr_size, 1, MPI_INT, addr_sizes, 1, MPI_INT, comm);
+    MPI_Allgather(&my_addr_size, 1, MPI_INT, str_sizes, 1, MPI_INT, comm);
     sizes_psum[0] = 0;
     for(i = 0; i < server->comm_size; i++) {
-        addr_buf_size += addr_sizes[i];
+        buf_size += str_sizes[i];
         if(i) {
-            sizes_psum[i] = sizes_psum[i - 1] + addr_sizes[i - 1];
+            sizes_psum[i] = sizes_psum[i - 1] + str_sizes[i - 1];
         }
     }
-    addr_str_buf = malloc(addr_buf_size);
-    MPI_Allgatherv(my_addr_str, my_addr_size, MPI_CHAR, addr_str_buf,
-                   addr_sizes, sizes_psum, MPI_CHAR, comm);
+    str_buf = malloc(buf_size);
+    MPI_Allgatherv(my_addr_str, my_addr_size, MPI_CHAR, str_buf, str_sizes,
+                   sizes_psum, MPI_CHAR, comm);
 
     server->server_address =
         malloc(server->comm_size * sizeof(*server->server_address));
     for(i = 0; i < server->comm_size; i++) {
-        server->server_address[i] = &addr_str_buf[sizes_psum[i]];
+        server->server_address[i] = &str_buf[sizes_psum[i]];
+    }
+
+    gethostname(my_node_str, HOST_NAME_MAX);
+    my_node_str[HOST_NAME_MAX - 1] = '\0';
+    my_node_name_len = strlen(my_node_str) + 1;
+    MPI_Allgather(&my_node_name_len, 1, MPI_INT, str_sizes, 1, MPI_INT, comm);
+    sizes_psum[0] = 0;
+    buf_size = 0;
+    for(i = 0; i < server->comm_size; i++) {
+        buf_size += str_sizes[i];
+        if(i) {
+            sizes_psum[i] = sizes_psum[i - 1] + str_sizes[i - 1];
+        }
+    }
+    str_buf = malloc(buf_size);
+    MPI_Allgatherv(my_node_str, my_node_name_len, MPI_CHAR, str_buf, str_sizes,
+                   sizes_psum, MPI_CHAR, comm);
+    server->node_names =
+        malloc(server->comm_size * sizeof(*server->node_names));
+    for(i = 0; i < server->comm_size; i++) {
+        server->node_names[i] = &str_buf[sizes_psum[i]];
     }
 
     MPI_Comm_rank(comm, &server->rank);
@@ -315,14 +342,15 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
         }
         fprintf(fd, "%d\n", server->comm_size);
         for(i = 0; i < server->comm_size; i++) {
-            fprintf(fd, "%s\n", server->server_address[i]);
+            fprintf(fd, "%s %s\n", server->node_names[i],
+                    server->server_address[i]);
         }
         fprintf(fd, "%s\n", server->listen_addr_str);
         fclose(fd);
     }
 
     free(my_addr_str);
-    free(addr_sizes);
+    free(str_sizes);
     free(sizes_psum);
     margo_addr_free(server->mid, my_addr);
 
@@ -522,7 +550,7 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od,
                 dht_add_entry(ssd->ent_self, odsc);
                 break;
             case DS_OBJ_OWNER:
-                dht_update_owner(ssd->ent_self, odsc);
+                dht_update_owner(ssd->ent_self, odsc, 1);
                 break;
             default:
                 fprintf(stderr, "ERROR: (%s): unknown object update type.\n",
@@ -670,10 +698,20 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     const char *envnthreads = getenv("DSPACES_NUM_HANDLERS");
     const char *envdrain = getenv("DSPACES_DRAIN");
     dspaces_provider_t server;
+    hg_class_t *hg;
+    static int is_initialized = 0;
     hg_bool_t flag;
     hg_id_t id;
     int num_handlers = DSPACES_DEFAULT_NUM_HANDLERS;
     int ret;
+
+    if(is_initialized) {
+        fprintf(stderr,
+                "DATASPACES: WARNING: %s: multiple instantiations of the "
+                "dataspaces server is not supported.\n",
+                __func__);
+        return (dspaces_ERR_ALLOCATION);
+    }
 
     server = (dspaces_provider_t)calloc(1, sizeof(*server));
     if(server == NULL)
@@ -694,9 +732,14 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     MPI_Comm_dup(comm, &server->comm);
     MPI_Comm_rank(comm, &server->rank);
 
+    ABT_init(0, NULL);
+
     server->mid =
         margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
-    assert(server->mid);
+    if(!server->mid) {
+        fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
+        return (dspaces_ERR_MERCURY);
+    }
 
     server->listen_addr_str = strdup(listen_addr_str);
 
@@ -706,28 +749,52 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     ret = ABT_mutex_create(&server->sspace_mutex);
     ret = ABT_mutex_create(&server->kill_mutex);
 
+    hg = margo_get_class(server->mid);
+
     margo_registered_name(server->mid, "put_rpc", &id, &flag);
 
     if(flag == HG_TRUE) { /* RPCs already registered */
+        DEBUG_OUT("RPC names already registered. Setting handlers...\n");
         margo_registered_name(server->mid, "put_rpc", &server->put_id, &flag);
+        DS_HG_REGISTER(hg, server->put_id, bulk_gdim_t, bulk_out_t, put_rpc);
         margo_registered_name(server->mid, "put_local_rpc",
                               &server->put_local_id, &flag);
+        DS_HG_REGISTER(hg, server->put_local_id, odsc_gdim_t, bulk_out_t,
+                       put_local_rpc);
         margo_registered_name(server->mid, "put_meta_rpc", &server->put_meta_id,
                               &flag);
+        DS_HG_REGISTER(hg, server->put_meta_id, put_meta_in_t, bulk_out_t,
+                       put_meta_rpc);
         margo_registered_name(server->mid, "get_rpc", &server->get_id, &flag);
+        DS_HG_REGISTER(hg, server->get_id, bulk_in_t, bulk_out_t, get_rpc);
+        margo_registered_name(server->mid, "get_local_rpc",
+                              &server->get_local_id, &flag);
         margo_registered_name(server->mid, "query_rpc", &server->query_id,
                               &flag);
+        DS_HG_REGISTER(hg, server->query_id, odsc_gdim_t, odsc_list_t,
+                       query_rpc);
         margo_registered_name(server->mid, "query_meta_rpc",
                               &server->query_meta_id, &flag);
+        DS_HG_REGISTER(hg, server->query_meta_id, query_meta_in_t,
+                       query_meta_out_t, query_meta_rpc);
         margo_registered_name(server->mid, "obj_update_rpc",
                               &server->obj_update_id, &flag);
+        DS_HG_REGISTER(hg, server->obj_update_id, odsc_gdim_t, void,
+                       obj_update_rpc);
         margo_registered_name(server->mid, "odsc_internal_rpc",
                               &server->odsc_internal_id, &flag);
+        DS_HG_REGISTER(hg, server->odsc_internal_id, odsc_gdim_t, odsc_list_t,
+                       odsc_internal_rpc);
         margo_registered_name(server->mid, "ss_rpc", &server->ss_id, &flag);
+        DS_HG_REGISTER(hg, server->ss_id, void, ss_information, ss_rpc);
         margo_registered_name(server->mid, "drain_rpc", &server->drain_id,
                               &flag);
         margo_registered_name(server->mid, "kill_rpc", &server->kill_id, &flag);
+        DS_HG_REGISTER(hg, server->kill_id, int32_t, void, kill_rpc);
+        margo_registered_name(server->mid, "kill_client_rpc",
+                              &server->kill_client_id, &flag);
         margo_registered_name(server->mid, "sub_rpc", &server->sub_id, &flag);
+        DS_HG_REGISTER(hg, server->sub_id, odsc_gdim_t, void, sub_rpc);
         margo_registered_name(server->mid, "notify_rpc", &server->notify_id,
                               &flag);
     } else {
@@ -746,6 +813,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
                             NULL);
         server->get_id = MARGO_REGISTER(server->mid, "get_rpc", bulk_in_t,
                                         bulk_out_t, get_rpc);
+        server->get_local_id = MARGO_REGISTER(server->mid, "get_local_rpc",
+                                              bulk_in_t, bulk_out_t, NULL);
         margo_register_data(server->mid, server->get_id, (void *)server, NULL);
         server->query_id = MARGO_REGISTER(server->mid, "query_rpc", odsc_gdim_t,
                                           odsc_list_t, query_rpc);
@@ -777,6 +846,11 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         margo_registered_disable_response(server->mid, server->kill_id,
                                           HG_TRUE);
         margo_register_data(server->mid, server->kill_id, (void *)server, NULL);
+        server->kill_client_id =
+            MARGO_REGISTER(server->mid, "kill_client_rpc", int32_t, void, NULL);
+        margo_registered_disable_response(server->mid, server->kill_client_id,
+                                          HG_TRUE);
+
         server->sub_id =
             MARGO_REGISTER(server->mid, "sub_rpc", odsc_gdim_t, void, sub_rpc);
         margo_register_data(server->mid, server->sub_id, (void *)server, NULL);
@@ -788,7 +862,13 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     }
     int size_sp = 1;
     int err = dsg_alloc(server, "dataspaces.conf", comm);
-    assert(err == 0);
+    if(err) {
+        fprintf(stderr,
+                "DATASPACES: ERROR: %s: could not allocate internal "
+                "structures. (%d)\n",
+                __func__, err);
+        return (dspaces_ERR_ALLOCATION);
+    }
 
     server->f_kill = server->dsg->num_apps;
 
@@ -803,6 +883,8 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
 
     *sv = server;
 
+    is_initialized = 1;
+
     return dspaces_SUCCESS;
 }
 
@@ -813,7 +895,7 @@ static void kill_client(dspaces_provider_t server, char *client_addr)
     int arg = -1;
 
     margo_addr_lookup(server->mid, client_addr, &server_addr);
-    margo_create(server->mid, server_addr, server->kill_id, &h);
+    margo_create(server->mid, server_addr, server->kill_client_id, &h);
     margo_forward(h, &arg);
     margo_addr_free(server->mid, server_addr);
     margo_destroy(h);
@@ -872,10 +954,7 @@ static int server_destroy(dspaces_provider_t server)
     int i;
 
     MPI_Barrier(server->comm);
-    if(server->rank == 0) {
-        fprintf(stderr,
-                "Finishing up, waiting for asynchronous jobs to finish...\n");
-    }
+    DEBUG_OUT("Finishing up, waiting for asynchronous jobs to finish...\n");
 
     if(server->f_drain) {
         ABT_thread_free(&server->drain_t);
@@ -895,9 +974,7 @@ static int server_destroy(dspaces_provider_t server)
 
     MPI_Barrier(server->comm);
     MPI_Comm_free(&server->comm);
-    if(server->rank == 0) {
-        fprintf(stderr, "Finalizing servers.\n");
-    }
+    DEBUG_OUT("finalizing server.\n");
     margo_finalize(server->mid);
 }
 
@@ -920,7 +997,14 @@ static void put_rpc(hg_handle_t handle)
     }
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
@@ -1009,7 +1093,14 @@ static void put_local_rpc(hg_handle_t handle)
     }
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
@@ -1063,7 +1154,14 @@ static void put_meta_rpc(hg_handle_t handle)
     hg_bulk_t bulk_handle;
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     DEBUG_OUT("Received meta data of length %d, name '%s' version %d.\n",
               in.length, in.name, in.version);
@@ -1269,7 +1367,14 @@ static void query_rpc(hg_handle_t handle)
     info = margo_get_info(handle);
     server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     DEBUG_OUT("received query\n");
 
@@ -1304,7 +1409,14 @@ static void query_meta_rpc(hg_handle_t handle)
     info = margo_get_info(handle);
     server = (dspaces_provider_t)margo_registered_data(mid, info->id);
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS && "margo_get_input() succeeded");
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     DEBUG_OUT("received metadata query for version %d of '%s', mode %d.\n",
               in.version, in.name, in.mode);
@@ -1369,7 +1481,14 @@ static void get_rpc(hg_handle_t handle)
         (dspaces_provider_t)margo_registered_data(mid, info->id);
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc.raw_odsc, sizeof(in_odsc));
@@ -1433,7 +1552,14 @@ static void odsc_internal_rpc(hg_handle_t handle)
         (dspaces_provider_t)margo_registered_data(mid, info->id);
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
@@ -1506,7 +1632,14 @@ static void obj_update_rpc(hg_handle_t handle)
     DEBUG_OUT("Received rpc to update obj_dht\n");
 
     hret = margo_get_input(handle, &in);
-    assert(hret == HG_SUCCESS);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr,
+                "DATASPACES: ERROR handling %s: margo_get_input() failed with "
+                "%d.\n",
+                __func__, hret);
+        margo_destroy(handle);
+        return;
+    }
 
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
@@ -1526,7 +1659,7 @@ static void obj_update_rpc(hg_handle_t handle)
         err = dht_add_entry(de, &in_odsc);
         break;
     case DS_OBJ_OWNER:
-        err = dht_update_owner(de, &in_odsc);
+        err = dht_update_owner(de, &in_odsc, 1);
         break;
     default:
         fprintf(stderr, "ERROR: (%s): unknown object update type.\n", __func__);

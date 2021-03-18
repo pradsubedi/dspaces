@@ -23,6 +23,8 @@
 
 #define MAX_VERSIONS 10
 
+#define DS_CLIENT_STORAGE 0x01
+
 typedef struct {
     void *iov_base;
     size_t iov_len;
@@ -31,9 +33,10 @@ typedef struct {
 enum storage_type { row_major, column_major };
 
 typedef struct {
-    char name[154];
+    char name[150];
 
     enum storage_type st;
+    uint32_t flags;
 
     char owner[128];
     unsigned int version;
@@ -306,7 +309,8 @@ long ssh_hash_elem_count(struct sspace *ss, const struct bbox *bb);
 int ssd_filter(struct obj_data *, obj_descriptor *, double *);
 int ssd_hash(struct sspace *, const struct bbox *, struct dht_entry *[]);
 
-int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc);
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc,
+                     int clear_flag);
 int dht_add_entry(struct dht_entry *, obj_descriptor *);
 obj_descriptor *dht_find_entry(struct dht_entry *, obj_descriptor *);
 int dht_find_entry_all(struct dht_entry *, obj_descriptor *,

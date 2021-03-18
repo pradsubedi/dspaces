@@ -8,7 +8,6 @@
 #ifndef __DSPACES_SERVER_H
 #define __DSPACES_SERVER_H
 
-#include <assert.h>
 #include <dspaces-common.h>
 #include <mpi.h>
 #include <stdio.h>

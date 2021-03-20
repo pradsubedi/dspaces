@@ -44,7 +44,7 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
     char **argp;
     int i;
 
-    *elem_size = 8;
+    *elem_size = 0;
     *num_vars = 1;
     *dims = 1;
     *terminate = 0;

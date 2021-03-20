@@ -1260,7 +1260,7 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
     hndls = malloc(sizeof(*hndls) * peer_num);
 
     for(i = 0; i < peer_num; i++) {
-        DEBUG_OUT("dht servr id %d\n", de_tab[i]->rank);
+        DEBUG_OUT("dht server id %d\n", de_tab[i]->rank);
         DEBUG_OUT("self id %d\n", server->dsg->rank);
 
         if(de_tab[i]->rank == server->dsg->rank) {
@@ -1278,6 +1278,7 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
 
     if(self_id_num > -1) {
         podsc = malloc(sizeof(*podsc) * ssd->ent_self->odsc_num);
+        DEBUG_OUT("finding local entries.\n");
         odsc_nums[self_id_num] =
             dht_find_entry_all(ssd->ent_self, q_odsc, &podsc, timeout);
         DEBUG_OUT("%d odscs found in %d\n", odsc_nums[self_id_num],

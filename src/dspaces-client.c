@@ -768,7 +768,7 @@ int dspaces_put_meta(dspaces_client_t client, char *name, int version,
 
     int ret = dspaces_SUCCESS;
 
-    DEBUG_OUT("posting metadata for `%s`, version %d with lenght %i bytes.\n",
+    DEBUG_OUT("posting metadata for `%s`, version %d with length %i bytes.\n",
               name, version, len);
 
     in.name = strdup(name);

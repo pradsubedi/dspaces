@@ -194,7 +194,11 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     MPI_Comm_rank(gcomm_, &rank_);
 
-    ret = dspaces_init(rank_, &ndcl);
+    ret = dspaces_init_mpi(gcomm_, &ndcl);
+    if(ret != dspaces_SUCCESS) {
+        fprintf(stderr, "dspaces_init_mpi() failed with %d.\n", ret);
+        goto error;
+    }
 
     tm_end = timer_read(&timer_);
     fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n",

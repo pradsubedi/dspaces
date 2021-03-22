@@ -9,6 +9,7 @@
 #define __DSPACES_CLIENT_H
 
 #include <dspaces-common.h>
+#include <mpi.h>
 #include <stdint.h>
 
 #if defined(__cplusplus)
@@ -30,6 +31,15 @@ typedef struct dspaces_client *dspaces_client_t;
  * @return dspaces_SUCCESS or error code defined in dspaces-common.h
  */
 int dspaces_init(int rank, dspaces_client_t *client);
+
+/**
+ * @brief Creates a dspaces client. Uses MPI primitives for scalable initialization.
+ * @param[in] comm: MPI communicator for reading configuration collectively.
+ * @param[out] client dspaces client
+ *
+ * @return dspaces_SUCCESS or error code defined in dspaces-common.h
+ */
+int dspaces_init_mpi(MPI_Comm comm, dspaces_client_t *c);
 
 void dspaces_define_gdim(dspaces_client_t client, const char *var_name,
                          int ndim, uint64_t *gdim);

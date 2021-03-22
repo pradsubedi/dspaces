@@ -18,7 +18,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include<mpi.h>
+#include <mpi.h>
 
 #define DEBUG_OUT(args...)                                                     \
     do {                                                                       \
@@ -320,7 +320,7 @@ FILE *open_conf_ds(dspaces_client_t client)
 {
     int wait_time, time = 0;
     FILE *fd;
-    
+
     do {
         fd = fopen("conf.ds", "r");
         if(!fd) {
@@ -330,7 +330,7 @@ FILE *open_conf_ds(dspaces_client_t client)
                           time);
             } else {
                 fprintf(stderr, "could not open config file 'conf.ds'.\n");
-                return(NULL);
+                return (NULL);
             }
         }
         wait_time = (rand() % 3) + 1;
@@ -338,7 +338,7 @@ FILE *open_conf_ds(dspaces_client_t client)
         sleep(wait_time);
     } while(!fd);
 
-    return(fd);
+    return (fd);
 }
 
 static int read_conf(dspaces_client_t client, char **listen_addr_str)
@@ -380,7 +380,8 @@ fini:
     return ret;
 }
 
-static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm, char **listen_addr_str)
+static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm,
+                         char **listen_addr_str)
 {
     FILE *fd, *conf;
     struct stat st;
@@ -403,7 +404,7 @@ static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm, char **listen_a
     }
     MPI_Bcast(&file_len, 1, MPI_INT, 0, comm);
     if(file_len == -1) {
-        return(-1);
+        return (-1);
     }
     file_buf = malloc(file_len);
     if(rank == 0) {
@@ -414,7 +415,8 @@ static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm, char **listen_a
 
     conf = fmemopen(file_buf, file_len, "r");
     fscanf(conf, "%d\n", &client->size_sp);
-    client->server_address = malloc(client->size_sp * sizeof(*client->server_address));
+    client->server_address =
+        malloc(client->size_sp * sizeof(*client->server_address));
     client->node_names = malloc(client->size_sp * sizeof(*client->node_names));
     for(i = 0; i < client->size_sp; i++) {
         fgetpos(conf, &lstart);
@@ -424,7 +426,8 @@ static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm, char **listen_a
         fscanf(conf, "%*s%n\n", &size);
         client->server_address[i] = malloc(size + 1);
         fsetpos(conf, &lstart);
-        fscanf(conf, "%s %s\n", client->node_names[i], client->server_address[i]);
+        fscanf(conf, "%s %s\n", client->node_names[i],
+               client->server_address[i]);
     }
     fgetpos(conf, &lstart);
     fscanf(conf, "%*s%n\n", &size);
@@ -436,14 +439,14 @@ static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm, char **listen_a
     free(file_buf);
     fprintf(stderr, "%d\n", client->size_sp);
 
-    return(0);
+    return (0);
 }
 
 static int dspaces_init_internal(int rank, dspaces_client_t *c)
 {
     const char *envdebug = getenv("DSPACES_DEBUG");
     static int is_initialized = 0;
-    
+
     if(is_initialized) {
         fprintf(stderr,
                 "DATASPACES: WARNING: %s: multiple instantiations of the "
@@ -458,7 +461,7 @@ static int dspaces_init_internal(int rank, dspaces_client_t *c)
     if(envdebug) {
         client->f_debug = 1;
     }
-    
+
     client->rank = rank;
 
     // now do dcg_alloc and store gid
@@ -472,14 +475,14 @@ static int dspaces_init_internal(int rank, dspaces_client_t *c)
     *c = client;
 
     return dspaces_SUCCESS;
-
 }
 
-static int dspaces_init_margo(dspaces_client_t client, const char *listen_addr_str)
+static int dspaces_init_margo(dspaces_client_t client,
+                              const char *listen_addr_str)
 {
     hg_class_t *hg;
     int i;
- 
+
     ABT_init(0, NULL);
 
     client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 0, 0);
@@ -585,7 +588,7 @@ static int dspaces_init_margo(dspaces_client_t client, const char *listen_addr_s
                                           HG_TRUE);
     }
 
-    return(dspaces_SUCCESS);
+    return (dspaces_SUCCESS);
 }
 
 static int dspaces_post_init(dspaces_client_t client)
@@ -595,12 +598,12 @@ static int dspaces_post_init(dspaces_client_t client)
     get_ss_info(client);
     DEBUG_OUT("Total max versions on the client side is %d\n",
               client->dcg->max_versions);
-   
+
     client->dcg->ls = ls_alloc(client->dcg->max_versions);
     client->local_put_count = 0;
     client->f_final = 0;
 
-    return(dspaces_SUCCESS); 
+    return (dspaces_SUCCESS);
 }
 
 int dspaces_init(int rank, dspaces_client_t *c)
@@ -608,15 +611,15 @@ int dspaces_init(int rank, dspaces_client_t *c)
     dspaces_client_t client;
     char *listen_addr_str;
     int ret;
-  
+
     ret = dspaces_init_internal(rank, &client);
     if(ret != dspaces_SUCCESS) {
-        return(ret);
+        return (ret);
     }
 
     ret = read_conf(client, &listen_addr_str);
     if(ret != 0) {
-        return(ret);
+        return (ret);
     }
 
     dspaces_init_margo(client, listen_addr_str);
@@ -641,21 +644,21 @@ int dspaces_init_mpi(MPI_Comm comm, dspaces_client_t *c)
 
     ret = dspaces_init_internal(rank, &client);
     if(ret != dspaces_SUCCESS) {
-        return(ret);
+        return (ret);
     }
-    
+
     ret = read_conf_mpi(client, comm, &listen_addr_str);
     if(ret != 0) {
-        return(ret);
+        return (ret);
     }
     dspaces_init_margo(client, listen_addr_str);
     free(listen_addr_str);
 
     dspaces_post_init(client);
-   
+
     *c = client;
- 
-    return(dspaces_SUCCESS);
+
+    return (dspaces_SUCCESS);
 }
 
 static void free_done_list(dspaces_client_t client)

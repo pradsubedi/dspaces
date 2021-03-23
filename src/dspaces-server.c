@@ -965,7 +965,8 @@ static int server_destroy(dspaces_provider_t server)
 
     kill_local_clients(server);
 
-    // Hack to avoid possible argobots race condition. Need to track this down at some point.
+    // Hack to avoid possible argobots race condition. Need to track this down
+    // at some point.
     sleep(1);
 
     free_sspace(server->dsg);

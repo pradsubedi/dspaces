@@ -437,7 +437,6 @@ static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm,
 
     fclose(conf);
     free(file_buf);
-    fprintf(stderr, "%d\n", client->size_sp);
 
     return (0);
 }

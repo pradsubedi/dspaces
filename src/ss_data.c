@@ -1,4 +1,5 @@
 /*
+p
  * Copyright (c) 2009, NSF Cloud and Autonomic Computing Center, Rutgers
  * University All rights reserved.
  *
@@ -1523,7 +1524,7 @@ void dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc,
     *tab_entries += sub.pub_count;
 }
 
-int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
+int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc, int clear_flag)
 {
     obj_descriptor *old_odsc;
 
@@ -1536,6 +1537,9 @@ int dht_update_owner(struct dht_entry *de, obj_descriptor *odsc)
         return (-ENOENT);
     }
     strcpy(old_odsc->owner, odsc->owner);
+    if(clear_flag) {
+        old_odsc->flags &= ~(DS_CLIENT_STORAGE);
+    }
 
     return 0;
 }
@@ -1744,7 +1748,7 @@ struct meta_data *meta_find_next_entry(ss_storage *ls, const char *name,
         list = &ls->meta_hash[index];
         list_for_each_entry(mdata, list, struct meta_data, entry)
         {
-            if(strcmp(mdata->name, name) == 0 && mdata->version > curr &&
+            if(strcmp(mdata->name, name) == 0 && (int)mdata->version > curr &&
                (!mdres || mdata->version < mdres->version)) {
                 mdres = mdata;
                 if(mdata->version < (curr + ls->size_hash)) {

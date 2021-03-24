@@ -17,6 +17,8 @@
 static int np[10] = {0};
 // block size per processor per direction
 static uint64_t sp[10] = {0};
+// global data dimensions
+static uint64_t gdim[10] = {0};
 //# of interations
 static int timesteps_;
 //# of processors in the application
@@ -102,9 +104,6 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
         data_tab[i] = data;
     }
 
-    MPI_Barrier(gcomm_);
-    tm_st = timer_read(&timer_);
-
     if(rank_ == root) {
         err = dspaces_put_meta(ndph, "mnd", ts, &elem_size, sizeof(elem_size));
         if(err != 0) {
@@ -112,6 +111,9 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
             return (err);
         }
     }
+
+    MPI_Barrier(gcomm_);
+    tm_st = timer_read(&timer_);
 
     for(i = 0; i < num_vars; i++) {
         sprintf(var_name, "mnd_%d", i);
@@ -145,6 +147,26 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
     return 0;
 }
 
+int set_gdims(dspaces_client_t client, int num_vars, int ndims, uint64_t *dims)
+{
+    char var_name[128];
+    int i, ret;
+
+    for(i = 0; i < num_vars; i++) {
+        sprintf(var_name, "mnd_%d", i);
+        dspaces_define_gdim(client, var_name, ndims, dims);
+    }
+    if(rank_ == 0) {
+        ret = dspaces_put_meta(client, "gdim", 0, dims, sizeof(*dims) * 10);
+        if(ret != 0) {
+            fprintf(stderr, "dspaces_put_meta() failed with %d.\n", ret);
+            return (ret);
+        }
+    }
+
+    return (0);
+}
+
 int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
                  size_t elem_size, int num_vars, int local_mode, int terminate,
                  MPI_Comm gcomm)
@@ -161,6 +183,7 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     for(i = 0; i < ndims; i++) {
         np[i] = npdim[i];
         sp[i] = spdim[i];
+        gdim[i] = np[i] * sp[i];
     }
 
     timer_init(&timer_, 1);
@@ -171,11 +194,21 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     MPI_Comm_rank(gcomm_, &rank_);
 
-    ret = dspaces_init(rank_, &ndcl);
+    ret = dspaces_init_mpi(gcomm_, &ndcl);
+    if(ret != dspaces_SUCCESS) {
+        fprintf(stderr, "dspaces_init_mpi() failed with %d.\n", ret);
+        goto error;
+    }
 
     tm_end = timer_read(&timer_);
     fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n",
             rank_, tm_end - tm_st);
+
+    ret = set_gdims(ndcl, num_vars, ndims, gdim);
+    if(ret != 0) {
+        ret = -1;
+        goto error;
+    }
 
     MPI_Comm_size(gcomm_, &nproc_);
 

@@ -9,6 +9,7 @@
 #include "timer.h"
 #include <dspaces.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <margo.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,8 @@
 static int np[10] = {0};
 // block size per processor per direction
 static uint64_t sp[10] = {0};
+// global dimensions
+static uint64_t gdim[10] = {0};
 //# of interations
 static int timesteps_;
 //# of processors in the application
@@ -159,6 +162,60 @@ static int couple_sub_nd(dspaces_client_t client, unsigned int ts, int num_vars,
     return ret;
 }
 
+int get_gdims(dspaces_client_t client, int num_vars, int ndims, MPI_Comm gcomm)
+{
+    char var_name[128];
+    int mver;
+    unsigned int mlen;
+    void *mdata;
+    int i, ret;
+    int root = 0;
+
+    if(rank_ == root) {
+        ret = dspaces_get_meta(client, "gdim", META_MODE_NEXT, -1, &mver,
+                               &mdata, &mlen);
+        if(ret != 0) {
+            fprintf(stderr, "dspaces_get_meta() failed with %d\n", ret);
+            return (ret);
+        }
+        if(mver != 0) {
+            fprintf(stderr, "gdim metadata is version %d, shoud be 0!\n", mver);
+            return (-1);
+        }
+        if(mlen != sizeof(*gdim) * 10) {
+            fprintf(stderr,
+                    "gdim metadata is the wrong size. Expected %li bytes and "
+                    "got %i!\n",
+                    sizeof(*gdim) * 1, mlen);
+            return (0);
+        }
+        memcpy(gdim, mdata, sizeof(*gdim) * 10);
+        free(mdata);
+        fprintf(stdout, "Global writer dimensions: (");
+        for(i = 0; i < 10; i++) {
+            if(i < ndims) {
+                fprintf(stdout, "%" PRIu64 ", ", gdim[i]);
+            } else if(gdim[i] != 0) {
+                fprintf(stderr,
+                        "ndim mismatch between writer and reader, or metadata "
+                        "corruption. Non-zero entry in dimension %d.\n",
+                        i);
+                return (-1);
+            }
+        }
+        fprintf(stdout, ")\n");
+    }
+
+    MPI_Bcast(gdim, sizeof(*gdim) * 10, MPI_BYTE, root, gcomm);
+
+    for(i = 0; i < num_vars; i++) {
+        sprintf(var_name, "mnd_%d", i);
+        dspaces_define_gdim(client, var_name, ndims, gdim);
+    }
+
+    return (0);
+}
+
 int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
                  size_t elem_size, int num_vars, int terminate, MPI_Comm gcomm)
 {
@@ -196,6 +253,8 @@ int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     tm_end = timer_read(&timer_);
     fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n",
             rank_, tm_end - tm_st);
+
+    get_gdims(ndcl, num_vars, ndims, gcomm);
 
     sub_handles = malloc(sizeof(*sub_handles) * timesteps_);
 

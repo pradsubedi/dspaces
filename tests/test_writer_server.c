@@ -5,22 +5,27 @@
  * See COPYRIGHT in top-level directory.
  */
 
-#include "mpi.h"
-#include <stdint.h>
+#include <dspaces-server.h>
+#include <dspaces.h>
+#include <margo.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-extern int test_get_run(int dims, int *npdim, uint64_t *spdim, int timestep,
-                        size_t elem_size, int num_vars, int terminate,
-                        int allocate, MPI_Comm gcomm);
+extern int test_put_run(int dims, int *npdim, uint64_t *spdim, int timestep,
+                        size_t elem_size, int num_vars, int local_mode,
+                        int terminate, MPI_Comm gcomm);
 
 void print_usage()
 {
     fprintf(
         stderr,
-        "Usage: test_reader <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] "
-        "<timesteps> [-s <elem_size>] [-c <var_count>] [-t] [-a]\n"
+        "Usage: test_writer_server <listen-address> <dims> np[0] .. np[dims-1] "
+        "sp[0] ... sp[dims-1] "
+        "<timesteps> [-s <elem_size>] [-m (server|local)] [-c <var_count>] "
+        "[-t]\n"
+        "   listen-address    - the address or fabric to which the server "
+        "should attach\n"
         "   dims              - number of data dimensions. Must be at least "
         "one\n"
         "   np[i]             - the number of processes in the ith dimension. "
@@ -30,36 +35,37 @@ void print_usage()
         "   timesteps         - the number of timestep iterations written\n"
         "   -s <elem_size>    - the number of bytes in each element. Defaults "
         "to 8\n"
+        "   -m (server|local) - the storage mode (stage to server or stage in "
+        "process memory). Defaults to server\n"
         "   -c <var_count>    - the number of variables written in each "
         "iteration. Defaults to one\n"
-        "   -t                - send server termination signal after reading "
-        "is complete\n"
-        "   -a                - ask dataspaces to allocate read data buffer\n");
+        "   -t                - send server termination after writing is "
+        "complete\n");
 }
 
 int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
-               int *timestep, size_t *elem_size, int *num_vars, int *terminate,
-               int *allocate)
+               int *timestep, size_t *elem_size, int *num_vars,
+               int *store_local, int *terminate)
 {
     char **argp;
     int i;
 
-    *elem_size = 0;
+    *elem_size = 8;
     *num_vars = 1;
+    *store_local = 0;
     *dims = 1;
     *terminate = 0;
-    *allocate = 0;
     if(argc > 1) {
-        *dims = atoi(argv[1]);
+        *dims = atoi(argv[2]);
     }
 
-    if(argc < 3 + (*dims * 2)) {
+    if(argc < 4 + (*dims * 2)) {
         fprintf(stderr, "Not enough arguments.\n");
         print_usage();
         return (-1);
     }
 
-    argp = &argv[2];
+    argp = &argv[3];
 
     for(i = 0; i < *dims; i++) {
         npdim[i] = atoi(*argp);
@@ -82,6 +88,16 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
             }
             *elem_size = atoi(*(argp + 1));
             argp += 2;
+        } else if(strcmp(*argp, "-m") == 0) {
+            if(argp == ((argv + argc) - 1)) {
+                fprintf(stderr, "%s takes an argument.\n", *argp);
+                print_usage();
+                return (-1);
+            }
+            if(strcmp(*(argp + 1), "local") == 0) {
+                *store_local = 1;
+            }
+            argp += 2;
         } else if(strcmp(*argp, "-c") == 0) {
             if(argp == ((argv + argc) - 1)) {
                 fprintf(stderr, "%s takes an argument.\n", *argp);
@@ -92,9 +108,6 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
             argp += 2;
         } else if(strcmp(*argp, "-t") == 0) {
             *terminate = 1;
-            argp++;
-        } else if(strcmp(*argp, "-a") == 0) {
-            *allocate = 1;
             argp++;
         } else {
             fprintf(stderr, "Unknown argument: %s\n", *argp);
@@ -112,43 +125,38 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
 
 int main(int argc, char **argv)
 {
-    int err;
-    int nprocs, rank;
+    char *listen_addr_str;
+    int dims, timestep, num_vars, local_mode, terminate, npapp, nprocs;
+    int np[10] = {0};
+    uint64_t sp[10] = {0};
+    size_t elem_size;
+    int rank;
+    int color;
     MPI_Comm gcomm;
     int i, ret;
 
-    int npapp;             // number of application processes
-    int np[10] = {0};      // number of processes in each dimension
-    uint64_t sp[10] = {0}; // block size per process in each dimension
-    int timestep;          // number of iterations
-    int dims;              // number of dimensions
-    size_t elem_size;      // Optional: size of one element in the global array.
-                           // Default value is 8 (bytes).
-    int num_vars;  // Optional: number of variables to be shared in the testing.
-                   // Default value is 1.
-    int terminate; // Optional: send terminate signal to server after read
-    int allocate;  // Optional: ask dataspaces to allocate receive buffer
-
     if(parse_args(argc, argv, &dims, np, sp, &timestep, &elem_size, &num_vars,
-                  &terminate, &allocate) != 0) {
-        goto err_out;
+                  &local_mode, &terminate) != 0) {
+        return (-1);
     }
+
+    listen_addr_str = argv[1];
+
+    dspaces_provider_t s = dspaces_PROVIDER_NULL;
+
+    MPI_Init(&argc, &argv);
+    gcomm = MPI_COMM_WORLD;
+
+    color = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_split(MPI_COMM_WORLD, color, rank, &gcomm);
+    MPI_Comm_size(gcomm, &nprocs);
+    MPI_Comm_rank(gcomm, &rank);
 
     npapp = 1;
     for(i = 0; i < dims; i++) {
         npapp *= np[i];
     }
-
-    // Using SPMD style programming
-    MPI_Init(&argc, &argv);
-    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Barrier(MPI_COMM_WORLD);
-    gcomm = MPI_COMM_WORLD;
-
-    int color = 1;
-    MPI_Comm_split(MPI_COMM_WORLD, color, rank, &gcomm);
-
     if(npapp != nprocs) {
         fprintf(stderr,
                 "Product of np[i] args must equal number of MPI processes!\n");
@@ -156,24 +164,26 @@ int main(int argc, char **argv)
         return (-1);
     }
 
-    // Run as data reader
+    ret = dspaces_server_init(listen_addr_str, gcomm, &s);
+    if(ret != 0)
+        return ret;
 
-    ret = test_get_run(dims, np, sp, timestep, elem_size, num_vars, terminate,
-                       allocate, gcomm);
+    test_put_run(dims, np, sp, timestep, elem_size, num_vars, local_mode,
+                 terminate, gcomm);
 
     MPI_Barrier(gcomm);
-    MPI_Finalize();
-
     if(rank == 0) {
-        fprintf(stderr, "That's all from test_reader, folks!\n");
+        fprintf(stderr, "Writer is all done!\n");
     }
 
-    if(ret != 0) {
-        goto err_out;
+    // make margo wait for finalize
+    dspaces_server_fini(s);
+
+    MPI_Barrier(gcomm);
+    if(rank == 0) {
+        fprintf(stderr, "Server is all done!\n");
     }
 
-    return ret;
-err_out:
-    fprintf(stderr, "test_reader rank %d has failed!\n", rank);
-    return -1;
+    MPI_Finalize();
+    return 0;
 }

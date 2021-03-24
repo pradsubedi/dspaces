@@ -18,6 +18,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <mpi.h>
+
 #define DEBUG_OUT(args...)                                                     \
     do {                                                                       \
         if(client->f_debug) {                                                  \
@@ -28,6 +30,8 @@
     } while(0);
 
 #define SUB_HASH_SIZE 16
+
+static int g_is_initialized = 0;
 
 static enum storage_type st = column_major;
 
@@ -117,6 +121,8 @@ static void choose_server(dspaces_client_t client)
 {
     int match_count = 0;
     int i;
+
+    gethostname(client->my_node_name, HOST_NAME_MAX);
 
     for(i = 0; i < client->size_sp; i++) {
         if(strcmp(client->my_node_name, client->node_names[i]) == 0) {
@@ -310,13 +316,10 @@ fini:
     return ret;
 }
 
-static int read_conf(dspaces_client_t client, char **listen_addr_str)
+FILE *open_conf_ds(dspaces_client_t client)
 {
     int wait_time, time = 0;
-    int size;
     FILE *fd;
-    fpos_t lstart;
-    int i, ret;
 
     do {
         fd = fopen("conf.ds", "r");
@@ -327,13 +330,29 @@ static int read_conf(dspaces_client_t client, char **listen_addr_str)
                           time);
             } else {
                 fprintf(stderr, "could not open config file 'conf.ds'.\n");
-                goto fini;
+                return (NULL);
             }
         }
         wait_time = (rand() % 3) + 1;
         time += wait_time;
         sleep(wait_time);
     } while(!fd);
+
+    return (fd);
+}
+
+static int read_conf(dspaces_client_t client, char **listen_addr_str)
+{
+    int size;
+    FILE *fd;
+    fpos_t lstart;
+    int i, ret;
+
+    ret = -1;
+    fd = open_conf_ds(client);
+    if(!fd) {
+        goto fini;
+    }
 
     fscanf(fd, "%d\n", &client->size_sp);
     client->server_address =
@@ -353,6 +372,7 @@ static int read_conf(dspaces_client_t client, char **listen_addr_str)
     fsetpos(fd, &lstart);
     *listen_addr_str = malloc(size + 1);
     fscanf(fd, "%s\n", *listen_addr_str);
+    fclose(fd);
 
     ret = 0;
 
@@ -360,11 +380,70 @@ fini:
     return ret;
 }
 
-int dspaces_init(int rank, dspaces_client_t *c)
+static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm,
+                         char **listen_addr_str)
 {
-    char *listen_addr_str;
+    FILE *fd, *conf;
+    struct stat st;
+    char *file_buf;
+    int file_len;
+    int rank;
+    int size;
+    fpos_t lstart;
+    int i;
+
+    MPI_Comm_rank(comm, &rank);
+    if(rank == 0) {
+        fd = open_conf_ds(client);
+        if(fd == NULL) {
+            file_len = -1;
+        } else {
+            fstat(fileno(fd), &st);
+            file_len = st.st_size;
+        }
+    }
+    MPI_Bcast(&file_len, 1, MPI_INT, 0, comm);
+    if(file_len == -1) {
+        return (-1);
+    }
+    file_buf = malloc(file_len);
+    if(rank == 0) {
+        fread(file_buf, 1, file_len, fd);
+        fclose(fd);
+    }
+    MPI_Bcast(file_buf, file_len, MPI_BYTE, 0, comm);
+
+    conf = fmemopen(file_buf, file_len, "r");
+    fscanf(conf, "%d\n", &client->size_sp);
+    client->server_address =
+        malloc(client->size_sp * sizeof(*client->server_address));
+    client->node_names = malloc(client->size_sp * sizeof(*client->node_names));
+    for(i = 0; i < client->size_sp; i++) {
+        fgetpos(conf, &lstart);
+        fgetpos(conf, &lstart);
+        fscanf(conf, "%*s%n", &size);
+        client->node_names[i] = malloc(size + 1);
+        fscanf(conf, "%*s%n\n", &size);
+        client->server_address[i] = malloc(size + 1);
+        fsetpos(conf, &lstart);
+        fscanf(conf, "%s %s\n", client->node_names[i],
+               client->server_address[i]);
+    }
+    fgetpos(conf, &lstart);
+    fscanf(conf, "%*s%n\n", &size);
+    fsetpos(conf, &lstart);
+    *listen_addr_str = malloc(size + 1);
+    fscanf(conf, "%s\n", *listen_addr_str);
+
+    fclose(conf);
+    free(file_buf);
+
+    return (0);
+}
+
+static int dspaces_init_internal(int rank, dspaces_client_t *c)
+{
     const char *envdebug = getenv("DSPACES_DEBUG");
-    hg_class_t *hg;
     static int is_initialized = 0;
 
     if(is_initialized) {
@@ -377,7 +456,6 @@ int dspaces_init(int rank, dspaces_client_t *c)
     dspaces_client_t client = (dspaces_client_t)calloc(1, sizeof(*client));
     if(!client)
         return dspaces_ERR_ALLOCATION;
-    int i;
 
     if(envdebug) {
         client->f_debug = 1;
@@ -391,10 +469,18 @@ int dspaces_init(int rank, dspaces_client_t *c)
     if(!(client->dcg))
         return dspaces_ERR_ALLOCATION;
 
-    read_conf(client, &listen_addr_str);
-    gethostname(client->my_node_name, HOST_NAME_MAX);
+    is_initialized = 1;
 
-    choose_server(client);
+    *c = client;
+
+    return dspaces_SUCCESS;
+}
+
+static int dspaces_init_margo(dspaces_client_t client,
+                              const char *listen_addr_str)
+{
+    hg_class_t *hg;
+    int i;
 
     ABT_init(0, NULL);
 
@@ -405,8 +491,6 @@ int dspaces_init(int rank, dspaces_client_t *c)
     }
 
     hg = margo_get_class(client->mid);
-
-    free(listen_addr_str);
 
     ABT_mutex_create(&client->ls_mutex);
     ABT_mutex_create(&client->drain_mutex);
@@ -503,6 +587,13 @@ int dspaces_init(int rank, dspaces_client_t *c)
                                           HG_TRUE);
     }
 
+    return (dspaces_SUCCESS);
+}
+
+static int dspaces_post_init(dspaces_client_t client)
+{
+    choose_server(client);
+
     get_ss_info(client);
     DEBUG_OUT("Total max versions on the client side is %d\n",
               client->dcg->max_versions);
@@ -511,11 +602,62 @@ int dspaces_init(int rank, dspaces_client_t *c)
     client->local_put_count = 0;
     client->f_final = 0;
 
+    return (dspaces_SUCCESS);
+}
+
+int dspaces_init(int rank, dspaces_client_t *c)
+{
+    dspaces_client_t client;
+    char *listen_addr_str;
+    int ret;
+
+    ret = dspaces_init_internal(rank, &client);
+    if(ret != dspaces_SUCCESS) {
+        return (ret);
+    }
+
+    ret = read_conf(client, &listen_addr_str);
+    if(ret != 0) {
+        return (ret);
+    }
+
+    dspaces_init_margo(client, listen_addr_str);
+
+    free(listen_addr_str);
+
+    dspaces_post_init(client);
+
     *c = client;
 
-    is_initialized = 1;
-
     return dspaces_SUCCESS;
+}
+
+int dspaces_init_mpi(MPI_Comm comm, dspaces_client_t *c)
+{
+    dspaces_client_t client;
+    int rank;
+    char *listen_addr_str;
+    int ret;
+
+    MPI_Comm_rank(comm, &rank);
+
+    ret = dspaces_init_internal(rank, &client);
+    if(ret != dspaces_SUCCESS) {
+        return (ret);
+    }
+
+    ret = read_conf_mpi(client, comm, &listen_addr_str);
+    if(ret != 0) {
+        return (ret);
+    }
+    dspaces_init_margo(client, listen_addr_str);
+    free(listen_addr_str);
+
+    dspaces_post_init(client);
+
+    *c = client;
+
+    return (dspaces_SUCCESS);
 }
 
 static void free_done_list(dspaces_client_t client)
@@ -768,7 +910,7 @@ int dspaces_put_meta(dspaces_client_t client, char *name, int version,
 
     int ret = dspaces_SUCCESS;
 
-    DEBUG_OUT("posting metadata for `%s`, version %d with lenght %i bytes.\n",
+    DEBUG_OUT("posting metadata for `%s`, version %d with length %i bytes.\n",
               name, version, len);
 
     in.name = strdup(name);

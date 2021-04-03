@@ -336,7 +336,7 @@ struct obj_data *ls_find_no_version(ss_storage *, obj_descriptor *);
 
 struct obj_data *obj_data_alloc(obj_descriptor *);
 struct obj_data *obj_data_alloc_no_data(obj_descriptor *, void *);
-struct obj_data *obj_data_alloc_with_data(obj_descriptor *, void *);
+struct obj_data *obj_data_alloc_with_data(obj_descriptor *, const void *);
 
 void meta_data_free(struct meta_data *mdata);
 

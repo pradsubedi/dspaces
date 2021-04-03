@@ -1139,7 +1139,8 @@ struct obj_data *obj_data_alloc_no_data(obj_descriptor *odsc, void *data)
     return od;
 }
 
-struct obj_data *obj_data_alloc_with_data(obj_descriptor *odsc, void *data)
+struct obj_data *obj_data_alloc_with_data(obj_descriptor *odsc,
+                                          const void *data)
 {
     struct obj_data *od = obj_data_alloc(odsc);
     if(!od)

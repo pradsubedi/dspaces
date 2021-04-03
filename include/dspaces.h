@@ -122,7 +122,7 @@ int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
  */
 int dspaces_put_local(dspaces_client_t client, const char *var_name,
                       unsigned int ver, int size, int ndim, uint64_t *lb,
-                      uint64_t *ub, void *data);
+                      uint64_t *ub, const void *data);
 
 /**
  * @brief Query the space to get data specified by a geometric
@@ -289,7 +289,7 @@ void dspaces_kill(dspaces_client_t client);
  *
  * @return zero for success, non-zero for failure
  */
-int dspaces_put_meta(dspaces_client_t client, char *name, int version,
+int dspaces_put_meta(dspaces_client_t client, const char *name, int version,
                      const void *data, unsigned int len);
 
 /**
@@ -314,7 +314,7 @@ int dspaces_put_meta(dspaces_client_t client, char *name, int version,
  * @param[out] data: the results buffer
  * @param[out] len: the size of the results buffer in bytes
  */
-int dspaces_get_meta(dspaces_client_t client, char *name, int mode,
+int dspaces_get_meta(dspaces_client_t client, const char *name, int mode,
                      int current, int *version, void **data,
                      unsigned int *len);
 

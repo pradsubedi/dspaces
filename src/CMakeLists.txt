@@ -1,5 +1,5 @@
 # list of source files
-set(dspaces-src util.c bbox.c ss_data.c dspaces-client.c)
+set(dspaces-src util.c bbox.c timer.c MapWrap.cc CppWrapper.cc ss_data.c dspaces-client.c)
 
 # load package helper for generating cmake CONFIG packages
 include (CMakePackageConfigHelpers)
@@ -22,7 +22,7 @@ set_target_properties (dspaces
     PROPERTIES VERSION ${dspaces_VERSION}
     SOVERSION ${dspaces_VERSION_MAJOR})
 
-set(dspaces-server-src util.c bbox.c ss_data.c dspaces-server.c)
+set(dspaces-server-src util.c bbox.c timer.c MapWrap.cc CppWrapper.cc ss_data.c dspaces-server.c)
 
 add_library(dspaces-server ${dspaces-server-src})
 target_link_libraries (dspaces-server margo m pthread)

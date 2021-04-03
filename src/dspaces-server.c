@@ -9,6 +9,8 @@
 #include "dspacesp.h"
 #include "gspace.h"
 #include "ss_data.h"
+#include "timer.h"
+#include "CppWrapper.h"
 #include <abt.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -34,12 +36,21 @@ static enum storage_type st = column_major;
 
 typedef enum obj_update_type { DS_OBJ_NEW, DS_OBJ_OWNER } obj_update_t;
 
-int cond_num = 0;
 
 struct addr_list_entry {
     struct list_head entry;
     char *addr;
 };
+
+//timing for access interval
+static struct timer timer_;
+/*********/
+
+int predict_write_access_interval(char *curr_obj_name, double prev_interval);
+int predict_read_access_interval(char *curr_obj_name, double prev_interval);
+
+/*********/
+
 
 struct dspaces_provider {
     margo_instance_id mid;
@@ -79,6 +90,19 @@ struct dspaces_provider {
     ABT_xstream drain_xstream;
     ABT_pool drain_pool;
     ABT_thread drain_t;
+
+    //store times for data access interval
+    double tm_read;
+    double tm_write;
+    double tm_read_diff;
+    double tm_write_diff;
+
+    ABT_cond drain_cond;
+    ABT_mutex drain_mutex;
+    int cond_num;
+
+    double idle_period;
+
 };
 
 DECLARE_MARGO_RPC_HANDLER(put_rpc);
@@ -435,6 +459,9 @@ static int dsg_alloc(dspaces_provider_t server, char *conf_name, MPI_Comm comm)
 
     INIT_LIST_HEAD(&dsg_l->obj_desc_drain_list);
 
+    timer_init(&timer_, 1);
+    timer_start(&timer_);
+
     server->dsg = dsg_l;
     return 0;
 err_free:
@@ -669,7 +696,9 @@ static void drain_thread(void *arg)
             if(counter == 1) {
                 list_del(&odscl->odsc_entry);
                 ABT_mutex_unlock(server->odsc_mutex);
+
                 int ret = get_client_data(odsc, server);
+
                 DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
                 if(ret != dspaces_SUCCESS) {
                     ABT_mutex_lock(server->odsc_mutex);
@@ -689,6 +718,81 @@ static void drain_thread(void *arg)
 
         ABT_thread_yield();
     }
+}
+
+// thread to move data between layers
+static void drain_thread_ngram(void *arg)
+{
+    dspaces_provider_t server = arg;
+    int counter;
+    
+    double bw;
+    DEBUG_OUT("Drain Thread Ngram started\n");
+    while(server->f_kill > 0) {
+        ABT_mutex_lock(server->drain_mutex);
+        if(server->cond_num == 0){
+            DEBUG_OUT("Thread waiting in cond_wait");
+            ABT_cond_wait(server->drain_cond, server->drain_mutex);
+        }else{
+            do{
+                DEBUG_OUT("Drain Thread WOKEUP\n");
+                counter = 0;
+                obj_descriptor odsc;
+                struct obj_desc_list *odscl;
+                ABT_mutex_lock(server->odsc_mutex);
+                list_for_each_entry(odscl, &(server->dsg->obj_desc_drain_list),
+                                    struct obj_desc_list, odsc_entry)
+                {
+                    //check of this odsc is enogh to read during the idle period
+                    if(bw != 0){
+                        double size = (double)((odscl->odsc.size) * bbox_volume(&(odscl->odsc.bb)));
+                        if((size/bw) < server->idle_period){
+                            memcpy(&odsc, &(odscl->odsc), sizeof(obj_descriptor));
+                            counter = 1;
+                            break;
+                        }
+
+                    }else{
+                        memcpy(&odsc, &(odscl->odsc), sizeof(obj_descriptor));
+                        counter = 1;
+                        break;
+                    }
+                }
+
+                if(counter == 1) {
+                    list_del(&odscl->odsc_entry);
+                    ABT_mutex_unlock(server->odsc_mutex);
+
+                    double tm_st = timer_read(&timer_);
+
+                    int ret = get_client_data(odsc, server);
+
+                    double tm_end = timer_read(&timer_);
+                    if((tm_end - tm_st)!= 0)    
+                        bw = ((double)((odscl->odsc.size) * bbox_volume(&(odscl->odsc.bb))))/(tm_end - tm_st);
+                    server->idle_period = server->idle_period - (tm_end - tm_st);
+
+                    DEBUG_OUT("Finished draining %s\n", obj_desc_sprint(&odsc));
+                    if(ret != dspaces_SUCCESS) {
+                        ABT_mutex_lock(server->odsc_mutex);
+                        DEBUG_OUT("Drain failed, returning object to queue...\n");
+                        list_add_tail(&odscl->odsc_entry,
+                                      &server->dsg->obj_desc_drain_list);
+                        ABT_mutex_unlock(server->odsc_mutex);
+                    }
+                    //sleep(1);
+                } else {
+                    ABT_mutex_unlock(server->odsc_mutex);
+                }
+            }while(counter == 1);
+            server->cond_num = 0;
+        }
+        ABT_mutex_unlock(server->drain_mutex);
+        ABT_thread_yield();
+
+    }
+    DEBUG_OUT ("Drain Thread is exiting\n");
+
 }
 
 int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
@@ -748,6 +852,9 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
     ret = ABT_mutex_create(&server->dht_mutex);
     ret = ABT_mutex_create(&server->sspace_mutex);
     ret = ABT_mutex_create(&server->kill_mutex);
+
+    ret = ABT_cond_create(&server->drain_cond);
+    ret = ABT_mutex_create(&server->drain_mutex);
 
     hg = margo_get_class(server->mid);
 
@@ -877,7 +984,7 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
         ABT_xstream_create(ABT_SCHED_NULL, &server->drain_xstream);
         ABT_xstream_get_main_pools(server->drain_xstream, 1,
                                    &server->drain_pool);
-        ABT_thread_create(server->drain_pool, drain_thread, server,
+        ABT_thread_create(server->drain_pool, drain_thread_ngram, server,
                           ABT_THREAD_ATTR_NULL, &server->drain_t);
     }
 
@@ -957,11 +1064,19 @@ static int server_destroy(dspaces_provider_t server)
     DEBUG_OUT("Finishing up, waiting for asynchronous jobs to finish...\n");
 
     if(server->f_drain) {
+        DEBUG_OUT("Stopping the drain thread");
+        ABT_mutex_lock(server->drain_mutex);
+        ABT_cond_signal(server->drain_cond);
+        ABT_mutex_unlock(server->drain_mutex);
+       // ABT_mutex_free(&server->drain_mutex);
+       // ABT_cond_free(&server->drain_cond);
+
         ABT_thread_free(&server->drain_t);
         ABT_xstream_join(server->drain_xstream);
         ABT_xstream_free(&server->drain_xstream);
         DEBUG_OUT("drain thread stopped.\n");
     }
+    //TODO: Free all the ABT Mutexes and Conditional variables
 
     kill_local_clients(server);
 
@@ -982,6 +1097,10 @@ static int server_destroy(dspaces_provider_t server)
     margo_finalize(server->mid);
 }
 
+
+
+
+
 static void put_rpc(hg_handle_t handle)
 {
     hg_return_t hret;
@@ -989,11 +1108,19 @@ static void put_rpc(hg_handle_t handle)
     bulk_out_t out;
     hg_bulk_t bulk_handle;
 
+
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info *info = margo_get_info(handle);
     dspaces_provider_t server =
         (dspaces_provider_t)margo_registered_data(mid, info->id);
+
+    if(server->tm_write != 0){
+        //not the first request compute the difference
+        double tm_end = timer_read(&timer_);
+        server->tm_write_diff = tm_end - server->tm_write;
+    }
+    
 
     if(server->f_kill == 0) {
         fprintf(stderr, "WARNING: put rpc received when server is finalizing. "
@@ -1065,6 +1192,9 @@ static void put_rpc(hg_handle_t handle)
 
     // now update the dht
     out.ret = dspaces_SUCCESS;
+
+    server->tm_write = timer_read(&timer_);
+
     margo_bulk_free(bulk_handle);
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
@@ -1081,11 +1211,20 @@ static void put_local_rpc(hg_handle_t handle)
     odsc_gdim_t in;
     bulk_out_t out;
 
+    //used to compute BW for meta transfer
+    double tm_meta_start = timer_read(&timer_);
+
     margo_instance_id mid = margo_hg_handle_get_instance(handle);
 
     const struct hg_info *info = margo_get_info(handle);
     dspaces_provider_t server =
         (dspaces_provider_t)margo_registered_data(mid, info->id);
+
+    if(server->tm_write != 0){
+        //not the first request compute the difference
+        double tm_end = timer_read(&timer_);
+        server->tm_write_diff = tm_end - server->tm_write;
+    }
 
     DEBUG_OUT("In the local put rpc\n");
 
@@ -1095,6 +1234,8 @@ static void put_local_rpc(hg_handle_t handle)
                 "shutting down. This will likely cause problems...\n",
                 __func__);
     }
+
+    
 
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
@@ -1106,6 +1247,8 @@ static void put_local_rpc(hg_handle_t handle)
         return;
     }
 
+    double tm_meta_end = timer_read(&timer_);
+    
     obj_descriptor in_odsc;
     memcpy(&in_odsc, in.odsc_gdim.raw_odsc, sizeof(in_odsc));
 
@@ -1133,6 +1276,42 @@ static void put_local_rpc(hg_handle_t handle)
     DEBUG_OUT("Adding drain list entry.\n");
     list_add_tail(&odscl->odsc_entry, &server->dsg->obj_desc_drain_list);
     ABT_mutex_unlock(server->odsc_mutex);
+
+    server->tm_write = timer_read(&timer_);
+
+    double bw_from_meta = (tm_meta_end - tm_meta_start)/sizeof(in_odsc);
+    char curr_obj_name[200];
+    convert_to_string(&od->obj_desc, curr_obj_name);
+    double predicted_interval = (double) predict_write_access_interval(curr_obj_name, server->tm_write_diff);
+
+    DEBUG_OUT ("Predicted idle time from n-gram is %lf\n", predicted_interval);
+
+    //now compute the minimum value
+    double pred_idle_time = 0.0;
+
+    if(server->tm_read_diff != 0){
+        double next_interval_naive = 0.0;
+        int counter = 1;
+        do{
+            next_interval_naive = (server->tm_read_diff * counter + server->tm_read) - server->tm_write;
+            counter ++;
+        }while(next_interval_naive < 0);
+        pred_idle_time = (predicted_interval < next_interval_naive) ? predicted_interval : next_interval_naive;
+
+    }else{
+        pred_idle_time = (predicted_interval < server->tm_write_diff) ? predicted_interval : server->tm_write_diff;
+    }
+    DEBUG_OUT ("Predicted idle time taking into interleaving is %lf", pred_idle_time);
+    if(pred_idle_time > 0.0){
+        ABT_mutex_lock(server->drain_mutex);
+        server->idle_period = pred_idle_time;
+        server->cond_num = 1;
+        ABT_cond_signal(server->drain_cond);
+        DEBUG_OUT("Sent cond signal for thread waking\n");
+        ABT_mutex_unlock(server->drain_mutex);
+        DEBUG_OUT("ABT Mutex unlocked \n");
+    }
+    
 
     // TODO: wake up thread to initiate draining
     out.ret = dspaces_SUCCESS;
@@ -1485,6 +1664,13 @@ static void get_rpc(hg_handle_t handle)
     dspaces_provider_t server =
         (dspaces_provider_t)margo_registered_data(mid, info->id);
 
+    if(server->tm_read != 0){
+        //not the first get request compute the difference
+        double tm_end = timer_read(&timer_);
+        server->tm_read_diff = tm_end - server->tm_read;
+    }
+    
+
     hret = margo_get_input(handle, &in);
     if(hret != HG_SUCCESS) {
         fprintf(stderr,
@@ -1536,6 +1722,37 @@ static void get_rpc(hg_handle_t handle)
     margo_bulk_free(bulk_handle);
     out.ret = dspaces_SUCCESS;
     out.ret = dspaces_SUCCESS;
+
+    server->tm_read = timer_read(&timer_);
+
+    char curr_obj_name[200];
+    convert_to_string(&od->obj_desc, curr_obj_name);
+    int predicted_interval = predict_read_access_interval(curr_obj_name, server->tm_read_diff);
+
+    //now compute the minimum value
+    double pred_idle_time = 0.0;
+
+    if(server->tm_write_diff != 0){
+        double next_interval_naive = 0.0;
+        int counter = 1;
+        do{
+            next_interval_naive = (server->tm_write_diff * counter + server->tm_write) - server->tm_read;
+            counter ++;
+        }while(next_interval_naive < 0);
+        pred_idle_time = (predicted_interval < next_interval_naive) ? predicted_interval : next_interval_naive;
+
+    }else{
+        pred_idle_time = (predicted_interval < server->tm_read_diff) ? predicted_interval : server->tm_read_diff;
+    }
+    DEBUG_OUT ("Predicted idle time taking into interleaving is %lf in get request\n", pred_idle_time);
+    if(pred_idle_time > 0.0){
+        ABT_mutex_lock(server->drain_mutex);
+        server->idle_period = pred_idle_time;
+        ABT_cond_signal(server->drain_cond);
+        ABT_mutex_unlock(server->drain_mutex);
+    }
+    
+
     obj_data_free(od);
     margo_respond(handle, &out);
     margo_free_input(handle, &in);
@@ -1825,4 +2042,156 @@ void dspaces_server_fini(dspaces_provider_t server)
 {
     margo_wait_for_finalize(server->mid);
     free(server);
+}
+
+
+//data structures and functions for markov_chain and n-gram
+int read_chain_length = 0;
+int write_chain_length = 0;
+int n_gram = 5;
+typedef struct m_node {
+    char var_name[200];
+    struct m_node * next;
+}m_node;
+
+m_node * curr_read_head;
+m_node * org_read_head;
+WrapperMap *read_map = NULL;
+
+m_node * curr_write_head;
+m_node * org_write_head;
+WrapperMap *write_map = NULL;
+
+int predict_write_access_interval(char *variable_name, double prev_interval){
+
+    int pred_interval = 0;
+//start of the code for markov chain predictor freq table
+    if(write_chain_length ==0){
+//this is the first time get or put is called in this server
+//perform initialization
+        curr_write_head = (m_node*) malloc (sizeof(m_node));
+        write_map = map_new(5);
+        strcpy(curr_write_head->var_name, variable_name);
+        curr_write_head ->next = NULL;
+        org_write_head = curr_write_head;
+        write_chain_length++;
+
+    } else{
+//not the first access, all declarations are done already
+        m_node * temp;
+        temp = (m_node*) malloc (sizeof(m_node));
+        strcpy(temp->var_name, variable_name);
+        temp->next = NULL;
+        curr_write_head->next = temp;
+        curr_write_head = curr_write_head->next;
+        write_chain_length++;
+
+        if(write_chain_length > n_gram){
+    //delete the irrevelant node
+            m_node * tmp_del;
+            tmp_del = org_write_head;
+            org_write_head = org_write_head->next;
+            free(tmp_del);
+            write_chain_length--;
+
+        }else{
+            m_node * traverser;
+            m_node * inner_head;
+            inner_head = org_write_head;
+            int cntr = 0;
+            while(inner_head->next != NULL){
+                traverser = inner_head;
+                cntr++;
+                char local_string[250];
+                memset(local_string, '\0', sizeof(local_string));
+                strcpy(local_string, traverser->var_name);
+                while(traverser->next->next !=NULL){
+                    strcat(local_string, traverser->next->var_name);
+                    traverser = traverser->next;
+                }
+                map_insert(write_map, local_string, prev_interval);
+
+                strcat(local_string, variable_name);
+    //get the value of the predicted interval
+                if(pred_interval == 0)
+                    pred_interval = map_get_value(write_map, local_string);
+                inner_head = inner_head->next;
+
+            }
+
+        }
+        if(pred_interval == 0)
+            pred_interval = map_get_value(write_map, variable_name);
+
+
+    }
+    return pred_interval;
+
+}
+
+int predict_read_access_interval(char *variable_name, double prev_interval){
+
+    int pred_interval = 0;
+    //start of the code for markov chain predictor freq table
+    if(read_chain_length ==0){
+    //this is the first time get or put is called in this server
+    //perform initialization
+        curr_read_head = (m_node*) malloc (sizeof(m_node));
+        read_map = map_new(5);
+        strcpy(curr_read_head->var_name, variable_name);
+        curr_read_head ->next = NULL;
+        org_read_head = curr_read_head;
+        read_chain_length++;
+
+    } else{
+    //not the first access, all declarations are done already
+        m_node * temp;
+        temp = (m_node*) malloc (sizeof(m_node));
+        strcpy(temp->var_name, variable_name);
+        temp->next = NULL;
+        curr_read_head->next = temp;
+        curr_read_head = curr_read_head->next;
+        read_chain_length++;
+
+        if(read_chain_length > n_gram){
+    //delete the irrevelant node
+            m_node * tmp_del;
+            tmp_del = org_read_head;
+            org_read_head = org_read_head->next;
+            free(tmp_del);
+            read_chain_length--;
+
+        }else{
+            m_node * traverser;
+            m_node * inner_head;
+            inner_head = org_read_head;
+            int cntr = 0;
+            while(inner_head->next != NULL){
+                traverser = inner_head;
+                cntr++;
+                char local_string[250];
+                memset(local_string, '\0', sizeof(local_string));
+                strcpy(local_string, traverser->var_name);
+                while(traverser->next->next !=NULL){
+                    strcat(local_string, traverser->next->var_name);
+                    traverser = traverser->next;
+                }
+                map_insert(read_map, local_string, prev_interval);
+
+                strcat(local_string, variable_name);
+                //get the value of the predicted interval
+                if(pred_interval == 0)
+                    pred_interval = map_get_value(read_map, local_string);
+                inner_head = inner_head->next;
+
+            }
+
+        }
+        if(pred_interval == 0)
+            pred_interval = map_get_value(read_map, variable_name);
+
+
+    }
+    return pred_interval;
+
 }

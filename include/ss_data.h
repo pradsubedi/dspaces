@@ -369,5 +369,6 @@ struct lock_data *get_lock(struct list_head *list, char *name);
 struct lock_data *create_lock(struct list_head *list, char *name);
 
 char **addr_str_buf_to_list(char *buf, int num_addrs);
+void convert_to_string(obj_descriptor *odsc, char *name);
 
 #endif /* __SS_DATA_H_ */

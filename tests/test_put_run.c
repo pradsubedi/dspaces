@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 //# of processors in fortran direction
 static int np[10] = {0};
@@ -203,13 +204,14 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     tm_end = timer_read(&timer_);
     fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n",
             rank_, tm_end - tm_st);
-
+    
+    /*
     ret = set_gdims(ndcl, num_vars, ndims, gdim);
     if(ret != 0) {
         ret = -1;
         goto error;
     }
-
+    */
     MPI_Comm_size(gcomm_, &nproc_);
 
     unsigned int ts;
@@ -219,6 +221,7 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
             ret = -1;
             goto error;
         }
+        sleep(3);
     }
 
     MPI_Barrier(gcomm_);

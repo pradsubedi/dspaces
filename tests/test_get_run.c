@@ -298,7 +298,7 @@ int test_get_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     fprintf(stdout, "TIMING_PERF Init_server_connection peer %d time= %lf\n",
             rank_, tm_end - tm_st);
 
-    get_gdims(ndcl, num_vars, ndims, gcomm);
+    //get_gdims(ndcl, num_vars, ndims, gcomm);
 
     unsigned int ts;
     for(ts = 1; ts <= timesteps_; ts++) {

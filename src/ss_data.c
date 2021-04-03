@@ -1877,3 +1877,26 @@ char **addr_str_buf_to_list(char *buf, int num_addrs)
     }
     return ret;
 }
+
+void convert_to_string(obj_descriptor *obj_desc, char *name){
+    char lb_name[100];
+    char *ap = lb_name;
+    char modified_name[100];
+    int SIZE;
+    //char ub_name[50];
+    int i;
+    for (i = 0; i < obj_desc->bb.num_dims; ++i)
+    {
+        ap+=sprintf(ap, "_%" PRIu64 "_%" PRIu64 , obj_desc->bb.lb.c[i], obj_desc->bb.ub.c[i]);
+    }
+    i =0;
+    sprintf(modified_name, "%s", obj_desc->name);
+    while(modified_name[i] != '\0'){
+        if (modified_name[i] == '/'){
+            modified_name[i] = '_';
+        }
+        i++;
+    }
+    sprintf(name, "%s_%s", modified_name, lb_name);
+
+}

@@ -22,6 +22,9 @@ target_link_libraries(test_sub dspaces)
 add_executable(test_writer_server test_writer_server.c test_put_run.c timer.c)
 target_link_libraries(test_writer_server dspaces dspaces-server)
 
+add_executable(test_writer_dyn test_writer_dyn.c test_put_dyn_run.c timer.c)
+target_link_libraries(test_writer_dyn dspaces)
+
 install(TARGETS dspaces_server terminator
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

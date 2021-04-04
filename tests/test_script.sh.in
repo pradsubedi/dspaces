@@ -118,4 +118,26 @@ elif [ $1 -eq 10 ]; then
             exit 1
         fi
         wait $writerproc
+elif [ $1 -eq 11 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 4 test_writer_dyn 1 4 32 5 -m $storage_mode -t -i 1000:1000 -l 100:100:0 &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 1 2 64 5 -t
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
+        wait $writerproc
+elif [ $1 -eq 12 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 4 test_writer_dyn 2 2 2 32 32 30 -m $storage_mode -t -l 100:0:10 &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 test_reader 2 1 2 64 32 30 -t
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
+        wait $writerproc
 fi

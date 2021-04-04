@@ -8,6 +8,7 @@
 #include "mpi.h"
 #include "timer.h"
 #include <dspaces.h>
+#include <inttypes.h>
 #include <margo.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,7 +82,7 @@ static int generate_nd(double *mnd, unsigned int ts, int dims)
     return 0;
 }
 
-static void update_bounds(unsigned int dyn[3])
+static void update_bounds(unsigned int dyn[3], int ts)
 {
     int send_left, send_right, recv_left, recv_right;
     int row_count;
@@ -112,7 +113,13 @@ static void update_bounds(unsigned int dyn[3])
         ub[0] += recv_right - send_right;
     }
 
-    MPI_Waitall(2, req, MPI_STATUSES_IGNORE);
+    if(left > -1 && right > -1) {
+        MPI_Waitall(2, req, MPI_STATUSES_IGNORE);
+    } else if(left > -1) {
+        MPI_Wait(&req[0], MPI_STATUS_IGNORE);
+    } else {
+        MPI_Wait(&req[1], MPI_STATUS_IGNORE);
+    }
 
     if(dyn[0] < dyn[1]) {
         dyn[0] += dyn[2];
@@ -189,7 +196,7 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
     }
     free(data_tab);
 
-    update_bounds(dyn);
+    update_bounds(dyn, ts);
 
     return 0;
 }
@@ -252,6 +259,7 @@ int test_put_dyn_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     if(coords[0] > 0) {
         coords[0]--;
         MPI_Cart_rank(gcomm_, coords, &left);
+        coords[0]++;
     } else {
         left = -1;
     }
@@ -259,6 +267,7 @@ int test_put_dyn_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     if(coords[0] < (np[0] - 1)) {
         coords[0]++;
         MPI_Cart_rank(gcomm_, coords, &right);
+        coords[0]--;
     } else {
         right = -1;
     }
@@ -283,7 +292,11 @@ int test_put_dyn_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     unsigned int ts;
     for(ts = 1; ts <= timesteps_; ts++) {
-        wait_time = 1000 * (cwait[0] + (rand() % (cwait[1] - cwait[0])));
+        if(cwait[0] == cwait[1]) {
+            wait_time = cwait[0];
+        } else {
+            wait_time = 1000 * (cwait[0] + (rand() % (cwait[1] - cwait[0])));
+        }
         usleep(wait_time);
         ret = couple_write_nd(ndcl, ts, num_vars, ndims, local_mode, dyn);
         if(ret != 0) {

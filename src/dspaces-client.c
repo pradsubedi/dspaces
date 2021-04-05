@@ -851,7 +851,7 @@ static int get_data(dspaces_client_t client, int num_odscs,
     }
 
     struct obj_data *return_od = obj_data_alloc_no_data(&req_obj, data);
-
+    DEBUG_OUT("waiting for %d fetches to complete.\n", num_odscs);
     // TODO: rewrite with margo_wait_any()
     for(int i = 0; i < num_odscs; ++i) {
         margo_wait(serv_req[i]);
@@ -863,6 +863,7 @@ static int get_data(dspaces_client_t client, int num_odscs,
         ssd_copy(return_od, od[i]);
         obj_data_free(od[i]);
     }
+    DEBUG_OUT("all fetches complete.\n");
     free(hndl);
     free(serv_req);
     free(in);

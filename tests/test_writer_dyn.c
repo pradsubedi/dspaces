@@ -188,6 +188,11 @@ int main(int argc, char **argv)
 
     int color = 1;
     MPI_Comm_split(MPI_COMM_WORLD, color, rank, &gcomm);
+    MPI_Comm_rank(gcomm, &rank);
+    MPI_Bcast(&seed, 1, MPI_INT, 0, gcomm);
+    if(rank == 0) {
+        fprintf(stdout, "RNG seed being used is %d.\n", seed);
+    }
 
     srand(seed + rank);
 
@@ -207,11 +212,11 @@ int main(int argc, char **argv)
     MPI_Finalize();
 
     if(rank == 0) {
-        fprintf(stderr, "That's all from test_writer, folks!\n");
+        fprintf(stderr, "That's all from test_writer_dyn, folks!\n");
     }
 
     return 0;
 err_out:
-    fprintf(stderr, "test_writer rank %d has failed.!\n", rank);
+    fprintf(stderr, "test_writer_dyn rank %d has failed.!\n", rank);
     return -1;
 }

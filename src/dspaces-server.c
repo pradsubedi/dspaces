@@ -540,6 +540,7 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od,
         fprintf(stderr, "'%s()': this should not happen, num_de == 0 ?!\n",
                 __func__);
     }
+    DEBUG_OUT("%d nodes must update their dht entries.\n", num_de);
     /* Update object descriptors on the corresponding nodes. */
     for(i = 0; i < num_de; i++) {
         if(dht_tab[i]->rank == server->dsg->rank) {
@@ -590,10 +591,11 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od,
                     __func__);
             return (dspaces_ERR_MERCURY);
         }
-        return dspaces_SUCCESS;
     }
 
-    return 0;
+    DEBUG_OUT("done with DHT updates.\n");
+
+    return dspaces_SUCCESS;
 }
 
 static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)
@@ -1503,6 +1505,7 @@ static void get_rpc(hg_handle_t handle)
     struct obj_data *od, *from_obj;
 
     from_obj = ls_find(server->dsg->ls, &in_odsc);
+    DEBUG_OUT("found data in local storage.\n");
 
     od = obj_data_alloc(&in_odsc);
     ssd_copy(od, from_obj);

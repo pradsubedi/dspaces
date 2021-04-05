@@ -130,6 +130,7 @@ elif [ $1 -eq 11 ]; then
         wait $serverproc || exit 1
         wait $writerproc
 elif [ $1 -eq 12 ]; then
+        sed -i 's/max_versions = 8/max_versions = 30/' dataspaces.conf
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 2 dspaces_server sockets &
         serverproc=$!
         @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 4 test_writer_dyn 2 2 2 32 32 30 -m $storage_mode -t -l 100:0:10 &

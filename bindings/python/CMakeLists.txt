@@ -41,6 +41,7 @@ install(TARGETS dspaces_wrapper
 install(FILES 
     ${CMAKE_CURRENT_SOURCE_DIR}/__init__.py
     ${CMAKE_PYTHON_OUTPUT_DIRECTORY}/dspaces_wrapper.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/dspaces.py
   DESTINATION ${CMAKE_INSTALL_PYTHONDIR}/dspaces
 )
 

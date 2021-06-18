@@ -23,6 +23,22 @@ PyObject *wrapper_dspaces_init(int rank)
     return (client);
 }
 
+void wrapper_dspaces_fini(PyObject *clientppy)
+{
+    dspaces_client_t *clientp = PyLong_AsVoidPtr(clientppy);
+
+    dspaces_fini(*clientp);
+
+    free(clientp);
+}
+
+void wrapper_dspaces_kill(PyObject *clientppy)
+{
+    dspaces_client_t *clientp = PyLong_AsVoidPtr(clientppy);
+
+    dspaces_kill(*clientp);
+}
+
 void wrapper_dspaces_put(PyObject *clientppy, PyObject *obj, const char *name,
                          int version, PyObject *offset)
 {
@@ -49,7 +65,7 @@ void wrapper_dspaces_put(PyObject *clientppy, PyObject *obj, const char *name,
 
 PyObject *wrapper_dspaces_get(PyObject *clientppy, const char *name,
                               int version, PyObject *lbt, PyObject *ubt,
-                              PyArray_Descr *dtype, int timeout)
+                              PyObject *dtype, int timeout)
 {
     dspaces_client_t *clientp = PyLong_AsVoidPtr(clientppy);
     int ndim = PyTuple_GET_SIZE(lbt);
@@ -58,7 +74,7 @@ PyObject *wrapper_dspaces_get(PyObject *clientppy, const char *name,
     void *data;
     PyObject *item;
     PyObject *arr;
-    PyArray_Descr *descr = PyArray_DescrNew(dtype);
+    PyArray_Descr *descr = PyArray_DescrNew((PyArray_Descr *)dtype);
     npy_intp dims[ndim];
     int i;
 

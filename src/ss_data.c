@@ -1584,7 +1584,9 @@ int dht_add_entry(struct dht_entry *de, obj_descriptor *odsc)
     list_for_each_entry_safe(sub, tmp, &de->dht_subs[n],
                              struct dht_sub_list_entry, entry)
     {
-        if(bbox_does_intersect(&odsc->bb, &sub->odsc->bb)) {
+        if(bbox_does_intersect(&odsc->bb, &sub->odsc->bb) &&
+           strcmp(odsc->name, sub->odsc->name) == 0 &&
+           odsc->version == sub->odsc->version) {
             sub_odscl = malloc(sizeof(*sub_odscl));
             sub_odscl->odsc = &odscl->odsc;
             list_add(&sub_odscl->odsc_entry, &sub->recv_odsc);

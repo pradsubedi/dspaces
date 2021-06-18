@@ -7,5 +7,6 @@ Name: dspaces
 Description: Distributed N-Dimensional Object Store
 Version: @dspaces_VERSION@
 
-Libs: -L${libdir} @PRIVATE_LIBS@
+Requires: margo mercury argobots
+Libs: -L${libdir} -ldspaces
 Cflags: -I${includedir}

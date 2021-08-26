@@ -283,7 +283,8 @@ int test_get_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     MPI_Comm_rank(gcomm_, &rank_);
     MPI_Comm_size(gcomm_, &nproc_);
 
-    ret = dspaces_init(rank_, &ndcl);
+    // ret = dspaces_init(rank_, &ndcl);
+    ret = dspaces_init_mpi(gcomm_, &ndcl);
     if(ret != dspaces_SUCCESS) {
         fprintf(stderr, "dspaces_init() failed with %d.\n", ret);
         goto error;

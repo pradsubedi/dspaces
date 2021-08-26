@@ -19,6 +19,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef HAVE_DRC
+#include <rdmacred.h>
+#endif /* HAVE_DRC */
+
 #define DEBUG_OUT(args...)                                                     \
     do {                                                                       \
         if(server->f_debug) {                                                  \
@@ -67,6 +71,10 @@ struct dspaces_provider {
     int f_debug;
     int f_drain;
     int f_kill;
+
+#ifdef HAVE_DRC
+    uint32_t drc_credential_id;
+#endif
 
     MPI_Comm comm;
 
@@ -346,6 +354,9 @@ static int write_conf(dspaces_provider_t server, MPI_Comm comm)
                     server->server_address[i]);
         }
         fprintf(fd, "%s\n", server->listen_addr_str);
+#ifdef HAVE_DRC
+        fprintf(fd, "%" PRIu32 "\n", server->drc_credential_id);
+#endif
         fclose(fd);
     }
 
@@ -734,8 +745,61 @@ int dspaces_server_init(char *listen_addr_str, MPI_Comm comm,
 
     ABT_init(0, NULL);
 
+#ifdef HAVE_DRC
+
+    server->drc_credential_id = 0;
+    if(server->rank == 0) {
+        ret =
+            drc_acquire(&server->drc_credential_id, DRC_FLAGS_FLEX_CREDENTIAL);
+        if(ret != DRC_SUCCESS) {
+            fprintf(stderr, "ERROR: (%s): drc_acquire failure %d\n", __func__,
+                    ret);
+            return ret;
+        }
+    }
+    MPI_Bcast(&server->drc_credential_id, 1, MPI_UINT32_T, 0, comm);
+
+    /* access credential on all ranks and convert to string for use by mercury
+     */
+
+    drc_info_handle_t drc_credential_info;
+    uint32_t drc_cookie;
+    char drc_key_str[256] = {0};
+
+    ret = drc_access(server->drc_credential_id, 0, &drc_credential_info);
+    if(ret != DRC_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): drc_access failure %d\n", __func__, ret);
+        return ret;
+    }
+
+    drc_cookie = drc_get_first_cookie(drc_credential_info);
+    sprintf(drc_key_str, "%u", drc_cookie);
+
+    struct hg_init_info hii;
+    memset(&hii, 0, sizeof(hii));
+    hii.na_init_info.auth_key = drc_key_str;
+
+    /* rank 0 grants access to the credential, allowing other jobs to use it */
+    if(server->rank == 0) {
+        ret = drc_grant(server->drc_credential_id, drc_get_wlm_id(),
+                        DRC_FLAGS_TARGET_WLM);
+        if(ret != DRC_SUCCESS) {
+            fprintf(stderr, "ERROR: (%s): drc_grants failure %d\n", __func__,
+                    ret);
+            return ret;
+        }
+    }
+
+    server->mid = margo_init_opt(listen_addr_str, MARGO_SERVER_MODE, &hii, 1,
+                                 num_handlers);
+
+#else
+
     server->mid =
         margo_init(listen_addr_str, MARGO_SERVER_MODE, 1, num_handlers);
+
+#endif /* HAVE_DRC */
+
     if(!server->mid) {
         fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
         return (dspaces_ERR_MERCURY);

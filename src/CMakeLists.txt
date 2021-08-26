@@ -1,3 +1,9 @@
+find_package(DRC)
+if(HAVE_DRC)
+    include_directories(${DRC_INCLUDE_DIRS})
+    add_definitions( -DHAVE_DRC)
+endif()
+
 # list of source files
 set(dspaces-src util.c bbox.c ss_data.c dspaces-client.c)
 
@@ -10,8 +16,13 @@ set (dspaces-pkg "share/cmake/dspaces")
 set (dspaces-vers "${dspaces_VERSION_MAJOR}.${dspaces_VERSION_MINOR}")
 
 add_library(dspaces ${dspaces-src})
-target_link_libraries (dspaces margo m pthread)
-target_include_directories (dspaces PUBLIC $<INSTALL_INTERFACE:include>)
+if(HAVE_DRC)
+    target_link_libraries (dspaces margo m pthread ${DRC_LIBRARIES})
+    target_include_directories (dspaces PUBLIC $<INSTALL_INTERFACE:include> ${DRC_INCLUDE_DIRS})
+else()
+    target_link_libraries (dspaces margo m pthread)
+    target_include_directories (dspaces PUBLIC $<INSTALL_INTERFACE:include>)
+endif()
 
 # local include's BEFORE, in case old incompatable .h files in prefix/include
 target_include_directories (dspaces BEFORE PUBLIC
@@ -25,10 +36,17 @@ set_target_properties (dspaces
 set(dspaces-server-src util.c bbox.c ss_data.c dspaces-server.c)
 
 add_library(dspaces-server ${dspaces-server-src})
-target_link_libraries (dspaces-server margo m pthread)
-
-target_include_directories (dspaces-server BEFORE PUBLIC
+if(HAVE_DRC)
+    target_link_libraries (dspaces-server margo m pthread ${DRC_LIBRARIES})
+    target_include_directories (dspaces-server BEFORE PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include> ${DRC_INCLUDE_DIRS})
+else()
+    target_link_libraries (dspaces-server margo m pthread)
+    target_include_directories (dspaces-server BEFORE PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>)
+endif()
+
+
 
 # for shared libs, establish the lib version
 set_target_properties (dspaces-server

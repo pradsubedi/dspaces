@@ -15,7 +15,6 @@ find_library(DRC_LIBRARY NAMES drc
 
 set(DRC_INCLUDE_DIRS ${DRC_INCLUDE_DIR})
 set(DRC_LIBRARIES ${DRC_LIBRARY})
-set(HAVE_DRC TRUE)
 include(FindPackageHandleStandardArgs)
 # handle the QUIETLY and REQUIRED arguments and set DRC_FOUND to TRUE
 # if all listed variables are TRUE
@@ -23,3 +22,7 @@ find_package_handle_standard_args(DRC DEFAULT_MSG
                                   DRC_INCLUDE_DIR DRC_LIBRARY)
 
 mark_as_advanced(DRC_INCLUDE_DIR DRC_LIBRARY)
+
+if(DRC_FOUND)
+  set(HAVE_DRC)
+endif()

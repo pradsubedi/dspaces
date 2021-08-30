@@ -283,8 +283,8 @@ static int read_conf(dspaces_client_t client, char **listen_addr_str)
     fscanf(fd, "%s\n", *listen_addr_str);
 
 #ifdef HAVE_DRC
-    fgetpos(conf, &lstart);
-    fscanf(conf, "%" SCNu32, &client->drc_credential_id);
+    fgetpos(fd, &lstart);
+    fscanf(fd, "%" SCNu32, &client->drc_credential_id);
 #endif
     fclose(fd);
 

@@ -24,5 +24,5 @@ find_package_handle_standard_args(DRC DEFAULT_MSG
 mark_as_advanced(DRC_INCLUDE_DIR DRC_LIBRARY)
 
 if(DRC_FOUND)
-  set(HAVE_DRC)
+  set(HAVE_DRC TRUE)
 endif()

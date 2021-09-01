@@ -1634,7 +1634,7 @@ int dht_find_entry_all(struct dht_entry *de, obj_descriptor *q_odsc,
             (*odsc_tab)[num_odsc++] = &odscl->odsc;
             if(sub) {
                 bbox_intersect(&q_odsc->bb, &odscl->odsc.bb, &isect);
-                num_elem -= bbox_volume(&isect);
+                num_elem -= ssh_hash_elem_count(de->ss, &isect);
             }
         }
     }

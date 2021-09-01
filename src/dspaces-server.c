@@ -1336,7 +1336,7 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
         if(odsc_nums[i] == 0) {
             continue;
         }
-        //dedup
+        // dedup
         for(j = 0; j < odsc_nums[i]; j++) {
             dup = 0;
             for(k = 0; k < (odsc_curr - *results); k++) {

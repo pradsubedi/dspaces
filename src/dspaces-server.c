@@ -1240,7 +1240,8 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
     odsc_list_t dht_resp;
     obj_descriptor *q_odsc;
     struct global_dimension *q_gdim;
-    int i, j;
+    int dup;
+    int i, j, k;
 
     q_odsc = (obj_descriptor *)query->odsc_gdim.raw_odsc;
     q_gdim = (struct global_dimension *)query->odsc_gdim.raw_gdim;
@@ -1335,8 +1336,21 @@ static int get_query_odscs(dspaces_provider_t server, odsc_gdim_t *query,
         if(odsc_nums[i] == 0) {
             continue;
         }
-        memcpy(odsc_curr, odsc_tabs[i], sizeof(*odsc_curr) * odsc_nums[i]);
-        odsc_curr += odsc_nums[i];
+        // dedup
+        for(j = 0; j < odsc_nums[i]; j++) {
+            dup = 0;
+            for(k = 0; k < (odsc_curr - *results); k++) {
+                if(obj_desc_equals_no_owner(&(*results)[k], &odsc_tabs[i][j])) {
+                    dup = 1;
+                    total_odscs--;
+                    break;
+                }
+            }
+            if(!dup) {
+                *odsc_curr = odsc_tabs[i][j];
+                odsc_curr++;
+            }
+        }
         free(odsc_tabs[i]);
     }
 

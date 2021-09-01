@@ -590,10 +590,9 @@ static int obj_update_dht(dspaces_provider_t server, struct obj_data *od,
                     __func__);
             return (dspaces_ERR_MERCURY);
         }
-        return dspaces_SUCCESS;
     }
 
-    return 0;
+    return dspaces_SUCCESS;
 }
 
 static int get_client_data(obj_descriptor odsc, dspaces_provider_t server)

@@ -1232,8 +1232,8 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
     return (0);
 }
 
-int dspaces_get_meta(dspaces_client_t client, const char *name, int mode, int current,
-                     int *version, void **data, unsigned int *len)
+int dspaces_get_meta(dspaces_client_t client, const char *name, int mode,
+                     int current, int *version, void **data, unsigned int *len)
 {
     query_meta_in_t in;
     query_meta_out_t out;

@@ -315,8 +315,7 @@ int dspaces_put_meta(dspaces_client_t client, const char *name, int version,
  * @param[out] len: the size of the results buffer in bytes
  */
 int dspaces_get_meta(dspaces_client_t client, const char *name, int mode,
-                     int current, int *version, void **data,
-                     unsigned int *len);
+                     int current, int *version, void **data, unsigned int *len);
 
 #if defined(__cplusplus)
 }

@@ -943,7 +943,7 @@ static int dspaces_init_listener(dspaces_client_t client)
     return (ret);
 }
 
-int dspaces_put_meta(dspaces_client_t client, char *name, int version,
+int dspaces_put_meta(dspaces_client_t client, const char *name, int version,
                      const void *data, unsigned int len)
 {
     hg_addr_t server_addr;
@@ -1232,7 +1232,7 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
     return (0);
 }
 
-int dspaces_get_meta(dspaces_client_t client, char *name, int mode, int current,
+int dspaces_get_meta(dspaces_client_t client, const char *name, int mode, int current,
                      int *version, void **data, unsigned int *len)
 {
     query_meta_in_t in;

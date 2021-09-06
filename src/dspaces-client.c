@@ -20,18 +20,18 @@
 
 #include <mpi.h>
 
-#define DEBUG_OUT(...)                                                     \
+#define DEBUG_OUT(...)                                                         \
     do {                                                                       \
         if(client->f_debug) {                                                  \
             fprintf(stderr, "Rank %i: %s, line %i (%s): ", client->rank,       \
                     __FILE__, __LINE__, __func__);                             \
-            fprintf(stderr, __VA_ARGS__);                                             \
+            fprintf(stderr, __VA_ARGS__);                                      \
         }                                                                      \
     } while(0);
 
 #define SUB_HASH_SIZE 16
 
-//static int g_is_initialized = 0;
+// static int g_is_initialized = 0;
 
 static enum storage_type st = column_major;
 

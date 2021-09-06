@@ -19,19 +19,19 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define DEBUG_OUT(...)                                                     \
+#define DEBUG_OUT(...)                                                         \
     do {                                                                       \
         if(server->f_debug) {                                                  \
             fprintf(stderr, "Rank %i: %s, line %i (%s): ", server->rank,       \
                     __FILE__, __LINE__, __func__);                             \
-            fprintf(stderr, __VA_ARGS__);                                             \
+            fprintf(stderr, __VA_ARGS__);                                      \
         }                                                                      \
     } while(0);
 
 #define DSPACES_DEFAULT_NUM_HANDLERS 4
 
 // TODO !
-//static enum storage_type st = column_major;
+// static enum storage_type st = column_major;
 
 typedef enum obj_update_type { DS_OBJ_NEW, DS_OBJ_OWNER } obj_update_t;
 

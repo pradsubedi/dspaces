@@ -279,5 +279,4 @@ int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
             rank_, tm_end - tm_st);
 
     return ret;
-
 }

@@ -1499,7 +1499,7 @@ void dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc,
     struct obj_desc_ptr_list *odscl, *tmp;
     int n = q_odsc->version % de->odsc_size;
 
-    (void)timeout; //TODO: implement timeouts
+    (void)timeout; // TODO: implement timeouts
     sub.odsc = q_odsc;
     sub.remaining = remaining;
     sub.pub_count = 0;

@@ -112,7 +112,6 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
 
 int main(int argc, char **argv)
 {
-    int err;
     int nprocs, rank;
     MPI_Comm gcomm;
     int i, ret;

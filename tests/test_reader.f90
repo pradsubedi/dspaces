@@ -17,7 +17,7 @@ use dspaces
     call dspaces_get(ndscl, "md0", 0_4, lb, ub, data, -1, ierr)
     do i = 1, 10
         do j = 1, 10
-            if(data(i,j) /= 2 * i + j) then
+            if(abs(data(i,j) - (2 * i + j)) > 1.0E-5) then
                 write(0,*) "Incorrect value ",data(i,j)
             endif
         end do

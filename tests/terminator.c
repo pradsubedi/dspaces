@@ -15,9 +15,10 @@
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
     dspaces_client_t ds;
     int rank;
-    char *listen_addr_str;
 
     MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

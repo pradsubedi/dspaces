@@ -121,7 +121,6 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
 
 int main(int argc, char **argv)
 {
-    int err;
     int nprocs, rank;
     MPI_Comm gcomm;
     int i;
@@ -178,7 +177,4 @@ int main(int argc, char **argv)
     }
 
     return 0;
-err_out:
-    fprintf(stderr, "test_writer rank %d has failed.!\n", rank);
-    return -1;
 }

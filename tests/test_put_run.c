@@ -21,8 +21,6 @@ static uint64_t sp[10] = {0};
 static uint64_t gdim[10] = {0};
 //# of interations
 static int timesteps_;
-//# of processors in the application
-static int npapp_;
 
 static int rank_, nproc_;
 
@@ -61,12 +59,12 @@ static int generate_nd(double *mnd, unsigned int ts, int dims)
 {
     // double value = 1.0*(rank_) + 0.0001*ts;
     double value = ts;
-    int i;
+    long i;
     uint64_t mnd_size = 1;
     for(i = 0; i < dims; i++)
         mnd_size *= sp[i];
     mnd_size = mnd_size * elem_size_ / sizeof(double);
-    for(i = 0; i < mnd_size; i++)
+    for(i = 0; i < (long)mnd_size; i++)
         *(mnd + i) = value;
     return 0;
 }
@@ -213,7 +211,7 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     MPI_Comm_size(gcomm_, &nproc_);
 
     unsigned int ts;
-    for(ts = 1; ts <= timesteps_; ts++) {
+    for(ts = 1; (int)ts <= timesteps_; ts++) {
         ret = couple_write_nd(ndcl, ts, num_vars, ndims, local_mode);
         if(ret != 0) {
             ret = -1;

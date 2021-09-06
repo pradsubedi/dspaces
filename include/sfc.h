@@ -335,6 +335,7 @@ static bitmask_t getIEEEBits(unsigned nDims, unsigned ignoreMe, /* ignored */
     double const *c = (double const *)cP;
     ieee754_double x;
     bitmask_t bits = 0;
+    (void)ignoreMe;
     for(x.d = c[d = 0]; d < nDims; x.d = c[++d]) {
         bitmask_t bit = x.ieee.negative;
         unsigned normalized = (x.ieee.exponent != 0);
@@ -342,7 +343,7 @@ static bitmask_t getIEEEBits(unsigned nDims, unsigned ignoreMe, /* ignored */
         if(diff <= 52)
             bit ^= 1 & ((diff < 32)
                             ? x.ieee.mantissa1 >> diff
-                            : (diff < 52) ? x.ieee.mantissa0 >> (diff - 32) :
+                            : (diff < 52) ? (unsigned)(x.ieee.mantissa0 >> (diff - 32)) :
                                           /* else */ normalized);
         else
             bit ^= (y == IEEErepBits - 1);
@@ -357,6 +358,8 @@ static void propogateIEEEBits(unsigned d, unsigned nBytes, char *cP, unsigned y,
     ieee754_double *x = d + (ieee754_double *)cP;
     unsigned normalized = (x->ieee.exponent != 0);
     unsigned diff = y - (x->ieee.exponent - normalized);
+    (void)nBytes;
+    (void)fold;
     if(diff < 32) {
         unsigned b = 1 << diff;
         unsigned bit = x->ieee.mantissa1 & b;
@@ -567,6 +570,8 @@ static unsigned hilbert_box_vtx_work(unsigned nDims, unsigned nBytes,
     bitmask_t const nd1Ones = ndOnes >> 1;
     bitmask_t bitsFolded = 0;
 
+    (void)nBits;
+    (void)max;
     while(y--) {
         bitmask_t reflection = getBits(nDims, nBytes, c1, y);
         bitmask_t diff = reflection ^ getBits(nDims, nBytes, c2, y);
@@ -664,6 +669,7 @@ unsigned hilbert_box_pt_work(unsigned nDims, unsigned nBytes, unsigned nBits,
     bitmask_t fold1 = 0, fold2 = 0;
     unsigned smearSum = 0;
 
+    (void)nBits;
     while(y-- > max) {
         bitmask_t reflection = getBits(nDims, nBytes, c1, y);
         bitmask_t diff = reflection ^ getBits(nDims, nBytes, c2, y);

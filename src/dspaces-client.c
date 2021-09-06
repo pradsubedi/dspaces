@@ -20,18 +20,18 @@
 
 #include <mpi.h>
 
-#define DEBUG_OUT(args...)                                                     \
+#define DEBUG_OUT(...)                                                     \
     do {                                                                       \
         if(client->f_debug) {                                                  \
             fprintf(stderr, "Rank %i: %s, line %i (%s): ", client->rank,       \
                     __FILE__, __LINE__, __func__);                             \
-            fprintf(stderr, args);                                             \
+            fprintf(stderr, __VA_ARGS__);                                             \
         }                                                                      \
     } while(0);
 
 #define SUB_HASH_SIZE 16
 
-static int g_is_initialized = 0;
+//static int g_is_initialized = 0;
 
 static enum storage_type st = column_major;
 
@@ -92,13 +92,12 @@ struct dspaces_client {
     ABT_xstream listener_xs;
 };
 
-DECLARE_MARGO_RPC_HANDLER(get_local_rpc);
-static void get_rpc(hg_handle_t h);
-DECLARE_MARGO_RPC_HANDLER(drain_rpc);
+DECLARE_MARGO_RPC_HANDLER(get_local_rpc)
+DECLARE_MARGO_RPC_HANDLER(drain_rpc)
 static void drain_rpc(hg_handle_t h);
-DECLARE_MARGO_RPC_HANDLER(kill_client_rpc);
+DECLARE_MARGO_RPC_HANDLER(kill_client_rpc)
 static void kill_client_rpc(hg_handle_t h);
-DECLARE_MARGO_RPC_HANDLER(notify_rpc);
+DECLARE_MARGO_RPC_HANDLER(notify_rpc)
 static void notify_rpc(hg_handle_t h);
 
 // round robin fashion
@@ -157,10 +156,7 @@ static int get_ss_info(dspaces_client_t client)
     hg_handle_t handle;
     ss_information out;
     hg_addr_t server_addr;
-    hg_size_t my_addr_size;
     int ret = dspaces_SUCCESS;
-
-    char *my_addr_str = NULL;
 
     get_server_address(client, &server_addr);
 
@@ -205,8 +201,8 @@ static int get_ss_info(dspaces_client_t client)
 static struct dc_gspace *dcg_alloc(dspaces_client_t client)
 {
     struct dc_gspace *dcg_l;
-    int i;
 
+    (void)client;
     dcg_l = calloc(1, sizeof(*dcg_l));
     if(!dcg_l)
         goto err_out;
@@ -219,101 +215,6 @@ static struct dc_gspace *dcg_alloc(dspaces_client_t client)
 err_out:
     fprintf(stderr, "'%s()': failed.\n", __func__);
     return NULL;
-}
-
-static int build_address(dspaces_client_t client)
-{
-    /* open config file for reading */
-    int ret;
-    struct stat st;
-    char *rd_buf = NULL;
-    ssize_t rd_buf_size;
-    char *tok;
-    void *addr_str_buf = NULL;
-    int addr_str_buf_len = 0, num_addrs = 0;
-    int wait_time, time = 0;
-    int fd;
-    char *file_name = "servids.0";
-
-    do {
-        fd = open(file_name, O_RDONLY);
-        if(fd == -1) {
-            if(errno == ENOENT) {
-                DEBUG_OUT("unable to find config file %s after %d seconds, "
-                          "will try again...\n",
-                          file_name, time);
-            } else {
-                fprintf(stderr, "ERROR: could not open config file %s.\n",
-                        file_name);
-                goto fini;
-            }
-            wait_time = (rand() % 3) + 1;
-            time += wait_time;
-            sleep(wait_time);
-        }
-    } while(fd == -1);
-
-    /* get file size and allocate a buffer to store it */
-    ret = fstat(fd, &st);
-    if(ret == -1) {
-        fprintf(
-            stderr,
-            "Error: Unable to stat config file %s for server_address list\n",
-            file_name);
-        goto fini;
-    }
-    ret = -1;
-    rd_buf = malloc(st.st_size);
-    if(rd_buf == NULL)
-        goto fini;
-
-    /* load it all in one fell swoop */
-    rd_buf_size = read(fd, rd_buf, st.st_size);
-    if(rd_buf_size != st.st_size) {
-        fprintf(
-            stderr,
-            "Error: Unable to stat config file %s for server_address list\n",
-            file_name);
-        goto fini;
-    }
-    rd_buf[rd_buf_size] = '\0';
-
-    // strtok the result - each space-delimited address is assumed to be
-    // a unique mercury address
-
-    tok = strtok(rd_buf, "\r\n\t ");
-    if(tok == NULL)
-        goto fini;
-
-    // build up the address buffer
-    addr_str_buf = malloc(rd_buf_size);
-    if(addr_str_buf == NULL)
-        goto fini;
-    do {
-        int tok_size = strlen(tok);
-        memcpy((char *)addr_str_buf + addr_str_buf_len, tok, tok_size + 1);
-        addr_str_buf_len += tok_size + 1;
-        num_addrs++;
-        tok = strtok(NULL, "\r\n\t ");
-    } while(tok != NULL);
-    if(addr_str_buf_len != rd_buf_size) {
-        // adjust buffer size if our initial guess was wrong
-        fprintf(stderr, "Read size and buffer_len are not equal\n");
-        void *tmp = realloc(addr_str_buf, addr_str_buf_len);
-        if(tmp == NULL)
-            goto fini;
-        addr_str_buf = tmp;
-    }
-    free(rd_buf);
-
-    /* set up address string array for group members */
-    client->server_address =
-        (char **)addr_str_buf_to_list(addr_str_buf, num_addrs);
-    client->size_sp = num_addrs;
-    ret = 0;
-
-fini:
-    return ret;
 }
 
 FILE *open_conf_ds(dspaces_client_t client)
@@ -867,6 +768,8 @@ static int get_data(dspaces_client_t client, int num_odscs,
     free(serv_req);
     free(in);
     free(return_od);
+
+    return 0;
 }
 
 static int dspaces_init_listener(dspaces_client_t client)
@@ -1157,7 +1060,7 @@ int dspaces_aget(dspaces_client_t client, const char *var_name,
     *data = malloc(num_elem * elem_size);
     get_data(client, num_odscs, odsc, odsc_tab, *data);
 
-    return 0;
+    return ret;
 }
 
 int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
@@ -1184,7 +1087,7 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
     if(num_odscs != 0)
         get_data(client, num_odscs, odsc, odsc_tab, data);
 
-    return (0);
+    return (ret);
 }
 
 int dspaces_get_meta(dspaces_client_t client, char *name, int mode, int current,
@@ -1467,7 +1370,7 @@ static struct dspaces_sub_handle *dspaces_get_sub(dspaces_client_t client,
                                                   int sub_id)
 {
     int listidx = sub_id % SUB_HASH_SIZE;
-    struct sub_list_node *node, **nodep;
+    struct sub_list_node *node;
 
     node = client->sub_lists[listidx];
     while(node) {
@@ -1487,7 +1390,6 @@ static void dspaces_move_sub(dspaces_client_t client, int sub_id)
 {
     int listidx = sub_id % SUB_HASH_SIZE;
     struct sub_list_node *node, **nodep;
-    struct dspaces_sub_handle *subh;
 
     nodep = &client->sub_lists[listidx];
     while(*nodep && (*nodep)->id != sub_id) {
@@ -1533,7 +1435,6 @@ static void notify_rpc(hg_handle_t handle)
     obj_descriptor *odsc_tab;
     void *data;
     size_t data_size;
-    int is_cancelled = 0;
     int i;
 
     margo_get_input(handle, &in);

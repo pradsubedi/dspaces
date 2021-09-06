@@ -238,7 +238,8 @@ static struct dht_entry *dht_entry_alloc(struct sspace *ssd, int size_hash)
     return de;
 }
 
-static void dht_entry_free(struct dht_entry *de)
+/*
+static void dht_entry_free(struct dht_entry *de) __attribute__((unused))
 {
     struct obj_desc_list *l, *t;
     int i;
@@ -252,6 +253,7 @@ static void dht_entry_free(struct dht_entry *de)
 
     free(de);
 }
+*/
 
 static struct dht *dht_alloc(struct sspace *ssd, const struct bbox *bb_domain,
                              int num_nodes, int size_hash)
@@ -323,10 +325,6 @@ static int dht_intersect(struct dht_entry *de, struct intv *itv)
     return 0;
 }
 
-static uint64_t ssd_get_max_dim(struct sspace *ss) { return ss->max_dim; }
-
-static int ssd_get_bpd(struct sspace *ss) { return ss->bpd; }
-
 /*
   Hash the global geometric domain space to 1d index, and map a piece
   to each entry in the dht->ent_tab.
@@ -343,7 +341,7 @@ static int dht_construct_hash(struct dht *dht, struct sspace *ssd)
 
     for(i = 0; i < dht->num_entries; i++) {
         sn[i] = vol / dht->num_entries;
-        if(i < vol % dht->num_entries) {
+        if(i < (int)(vol % dht->num_entries)) {
             sn[i]++;
         }
     }
@@ -414,7 +412,7 @@ static struct sspace *ssd_alloc_v1(const struct bbox *bb_domain, int num_nodes,
     if(max_dim == 0)
         max_dim = 1; // Note: max_dim as 0 would not work...
 
-    ssd->max_dim = next_pow_2(max_dim);
+    ssd->max_dim = next_pow_2_v2(max_dim);
     ssd->bpd = compute_bits(ssd->max_dim);
 
     err = dht_construct_hash(ssd->dht, ssd);
@@ -626,10 +624,10 @@ static int matrix_copy(struct matrix *a, struct matrix *b)
     char *A = a->pdata;
     char *B = b->pdata;
 
-    uint64_t a0, a1, a2, a3, a4, a5, a6, a7, a8, a9;
+    uint64_t a1, a2, a3, a4, a5, a6, a7, a8, a9;
     uint64_t aloc = 0, aloc1 = 0, aloc2 = 0, aloc3 = 0, aloc4 = 0, aloc5 = 0,
              aloc6 = 0, aloc7 = 0, aloc8 = 0, aloc9 = 0;
-    uint64_t b0, b1, b2, b3, b4, b5, b6, b7, b8, b9;
+    uint64_t b1, b2, b3, b4, b5, b6, b7, b8, b9;
     uint64_t bloc = 0, bloc1 = 0, bloc2 = 0, bloc3 = 0, bloc4 = 0, bloc5 = 0,
              bloc6 = 0, bloc7 = 0, bloc8 = 0, bloc9 = 0;
     uint64_t numelem;
@@ -755,12 +753,12 @@ dim10:
         if(a->num_dims == 9)
             return num_copied_elem;
     }
+    return num_copied_elem;
 }
 
 char *obj_desc_sprint(obj_descriptor *odsc)
 {
     char *str;
-    int nb;
 
     str = alloc_sprintf("obj_descriptor = {\n"
                         "\t.name = %s,\n"
@@ -869,7 +867,7 @@ struct meta_data *ls_find_meta(ss_storage *ls, const char *name, int version)
     list = &ls->meta_hash[index];
     list_for_each_entry(mdata, list, struct meta_data, entry)
     {
-        if(strcmp(name, mdata->name) == 0 && mdata->version == version) {
+        if(strcmp(name, mdata->name) == 0 && (int)mdata->version == version) {
             return (mdata);
         }
     }
@@ -901,7 +899,7 @@ void ls_add_meta(ss_storage *ls, struct meta_data *mdata)
                              struct meta_sub_list_entry, entry)
     {
         if(strcmp(msub->name, mdata->name) == 0 &&
-           msub->version == mdata->version) {
+           msub->version == (int)mdata->version) {
             msub->mdata = mdata;
             msub_found = 1;
             list_del(&msub->entry);
@@ -1421,6 +1419,8 @@ int ssd_filter(struct obj_data *from, obj_descriptor *odsc, double *dval)
     // TODO: search the matrix to find the min
     static int n = 1;
 
+    (void)from;
+    (void)odsc;
     *dval = 2.0 * n;
     n++;
 
@@ -1499,6 +1499,7 @@ void dht_local_subscribe(struct dht_entry *de, obj_descriptor *q_odsc,
     struct obj_desc_ptr_list *odscl, *tmp;
     int n = q_odsc->version % de->odsc_size;
 
+    (void)timeout; //TODO: implement timeouts
     sub.odsc = q_odsc;
     sub.remaining = remaining;
     sub.pub_count = 0;
@@ -1675,7 +1676,6 @@ int dht_find_versions(struct dht_entry *de, obj_descriptor *q_odsc,
 struct meta_data *ls_subscribe_meta(ss_storage *ls, const char *name,
                                     int version)
 {
-    struct meta_data *mdata;
     struct meta_sub_list_entry msub;
     int index;
     struct list_head *sub_list;
@@ -1696,7 +1696,6 @@ struct meta_data *ls_subscribe_meta(ss_storage *ls, const char *name,
 
 struct meta_data *ls_subscribe_meta_no_version(ss_storage *ls, const char *name)
 {
-    struct meta_data *mdata;
     struct meta_sub_list_entry msub;
     struct list_head *sub_list;
 
@@ -1753,7 +1752,7 @@ struct meta_data *meta_find_next_entry(ss_storage *ls, const char *name,
             if(strcmp(mdata->name, name) == 0 && (int)mdata->version > curr &&
                (!mdres || mdata->version < mdres->version)) {
                 mdres = mdata;
-                if(mdata->version < (curr + ls->size_hash)) {
+                if((int)mdata->version < (curr + ls->size_hash)) {
                     break;
                 }
             }

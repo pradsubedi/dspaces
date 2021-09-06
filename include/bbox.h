@@ -53,23 +53,6 @@ uint64_t intv_size(struct intv *);
 
 void bbox_divide_in2_ondim(const struct bbox *b0, struct bbox *b_tab, int dim);
 
-static uint64_t next_pow_2(uint64_t n)
-{
-    uint64_t i;
-
-    if(n < 0)
-        return 0;
-
-    i = ~(~0ULL >> 1);
-    while(i && !(i & n)) {
-        i = i >> 1;
-    }
-
-    i = i << 1;
-
-    return i;
-}
-
 extern char *str_append_const(char *, const char *);
 extern char *str_append(char *, char *);
 

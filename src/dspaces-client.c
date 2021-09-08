@@ -18,6 +18,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef HAVE_DRC
+#include <rdmacred.h>
+#endif /* HAVE_DRC */
+
 #include <mpi.h>
 
 #define DEBUG_OUT(...)                                                         \
@@ -82,6 +86,10 @@ struct dspaces_client {
     struct sub_list_node *sub_lists[SUB_HASH_SIZE];
     struct sub_list_node *done_list;
     int pending_sub;
+
+#ifdef HAVE_DRC
+    uint32_t drc_credential_id;
+#endif /* HAVE_DRC */
 
     ABT_mutex ls_mutex;
     ABT_mutex drain_mutex;
@@ -273,6 +281,11 @@ static int read_conf(dspaces_client_t client, char **listen_addr_str)
     fsetpos(fd, &lstart);
     *listen_addr_str = malloc(size + 1);
     fscanf(fd, "%s\n", *listen_addr_str);
+
+#ifdef HAVE_DRC
+    fgetpos(fd, &lstart);
+    fscanf(fd, "%" SCNu32, &client->drc_credential_id);
+#endif
     fclose(fd);
 
     ret = 0;
@@ -336,6 +349,11 @@ static int read_conf_mpi(dspaces_client_t client, MPI_Comm comm,
     *listen_addr_str = malloc(size + 1);
     fscanf(conf, "%s\n", *listen_addr_str);
 
+#ifdef HAVE_DRC
+    fgetpos(conf, &lstart);
+    fscanf(conf, "%" SCNu32, &client->drc_credential_id);
+#endif
+
     fclose(conf);
     free(file_buf);
 
@@ -385,7 +403,34 @@ static int dspaces_init_margo(dspaces_client_t client,
 
     ABT_init(0, NULL);
 
+#ifdef HAVE_DRC
+    int ret = 0;
+    drc_info_handle_t drc_credential_info;
+    uint32_t drc_cookie;
+    char drc_key_str[256] = {0};
+
+    ret = drc_access(client->drc_credential_id, 0, &drc_credential_info);
+    if(ret != DRC_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): drc_access failure %d\n", __func__, ret);
+        return ret;
+    }
+
+    drc_cookie = drc_get_first_cookie(drc_credential_info);
+    sprintf(drc_key_str, "%u", drc_cookie);
+
+    struct hg_init_info hii;
+    memset(&hii, 0, sizeof(hii));
+    hii.na_init_info.auth_key = drc_key_str;
+
+    client->mid =
+        margo_init_opt(listen_addr_str, MARGO_SERVER_MODE, &hii, 0, 0);
+
+#else
+
     client->mid = margo_init(listen_addr_str, MARGO_SERVER_MODE, 0, 0);
+
+#endif /* HAVE_DRC */
+
     if(!client->mid) {
         fprintf(stderr, "ERROR: %s: margo_init() failed.\n", __func__);
         return (dspaces_ERR_MERCURY);
@@ -801,7 +846,7 @@ static int dspaces_init_listener(dspaces_client_t client)
     return (ret);
 }
 
-int dspaces_put_meta(dspaces_client_t client, char *name, int version,
+int dspaces_put_meta(dspaces_client_t client, const char *name, int version,
                      const void *data, unsigned int len)
 {
     hg_addr_t server_addr;
@@ -1090,8 +1135,8 @@ int dspaces_get(dspaces_client_t client, const char *var_name, unsigned int ver,
     return (ret);
 }
 
-int dspaces_get_meta(dspaces_client_t client, char *name, int mode, int current,
-                     int *version, void **data, unsigned int *len)
+int dspaces_get_meta(dspaces_client_t client, const char *name, int mode,
+                     int current, int *version, void **data, unsigned int *len)
 {
     query_meta_in_t in;
     query_meta_out_t out;

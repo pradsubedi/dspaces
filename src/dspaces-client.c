@@ -55,6 +55,13 @@ struct sub_list_node {
     int id;
 };
 
+struct dspaces_put_req {
+    hg_handle_t handle;
+    margo_request req;
+    struct dspaces_put_req *next;
+    bulk_gdim_t in;
+};
+
 struct dspaces_client {
     margo_instance_id mid;
     hg_id_t put_id;
@@ -81,6 +88,7 @@ struct dspaces_client {
     int f_debug;
     int f_final;
     int listener_init;
+    struct dspaces_put_req *put_reqs;
 
     int sub_serial;
     struct sub_list_node *sub_lists[SUB_HASH_SIZE];
@@ -644,6 +652,10 @@ int dspaces_fini(dspaces_client_t client)
         ABT_mutex_unlock(client->drain_mutex);
     } while(client->local_put_count > 0);
 
+    while(client->put_reqs) {
+        dspaces_check_put(client, client->put_reqs, 1);
+    }
+
     DEBUG_OUT("all objects drained. Finalizing...\n");
 
     free_gdim_list(&client->dcg->gdim_list);
@@ -670,12 +682,11 @@ void dspaces_define_gdim(dspaces_client_t client, const char *var_name,
     }
 }
 
-int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
-                int elem_size, int ndim, uint64_t *lb, uint64_t *ub,
-                const void *data)
+static int setup_put(dspaces_client_t client, const char *var_name,
+                     unsigned int ver, int elem_size, int ndim, uint64_t *lb,
+                     uint64_t *ub, const void *data, hg_addr_t *server_addr,
+                     hg_handle_t *handle, bulk_gdim_t *in)
 {
-    hg_addr_t server_addr;
-    hg_handle_t handle;
     hg_return_t hret;
     int ret = dspaces_SUCCESS;
 
@@ -697,8 +708,65 @@ int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
     strncpy(odsc.name, var_name, sizeof(odsc.name) - 1);
     odsc.name[sizeof(odsc.name) - 1] = '\0';
 
+    struct global_dimension odsc_gdim;
+    set_global_dimension(&(client->dcg->gdim_list), var_name,
+                         &(client->dcg->default_gdim), &odsc_gdim);
+
+    in->odsc.size = sizeof(odsc);
+    in->odsc.raw_odsc = (char *)(&odsc);
+    in->odsc.gdim_size = sizeof(struct global_dimension);
+    in->odsc.raw_gdim = (char *)(&odsc_gdim);
+    hg_size_t rdma_size = (elem_size)*bbox_volume(&odsc.bb);
+
+    DEBUG_OUT("sending object %s \n", obj_desc_sprint(&odsc));
+    // int *a = NULL;
+    // int b = *a;
+    hret = margo_bulk_create(client->mid, 1, (void **)&data, &rdma_size,
+                             HG_BULK_READ_ONLY, &in->handle);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_bulk_create() failed\n", __func__);
+        return dspaces_ERR_MERCURY;
+    }
+
+    get_server_address(client, server_addr);
+    /* create handle */
+    hret = margo_create(client->mid, *server_addr, client->put_id, handle);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_create() failed\n", __func__);
+        margo_bulk_free(in->handle);
+        return dspaces_ERR_MERCURY;
+    }
+}
+
+int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
+                int elem_size, int ndim, uint64_t *lb, uint64_t *ub,
+                const void *data)
+{
+    hg_addr_t server_addr;
+    hg_handle_t handle;
+    hg_return_t hret;
     bulk_gdim_t in;
     bulk_out_t out;
+    int ret = dspaces_SUCCESS;
+
+    obj_descriptor odsc = {.version = ver,
+                           .owner = {0},
+                           .st = st,
+                           .flags = 0,
+                           .size = elem_size,
+                           .bb = {
+                               .num_dims = ndim,
+                           }};
+
+    memset(odsc.bb.lb.c, 0, sizeof(uint64_t) * BBOX_MAX_NDIM);
+    memset(odsc.bb.ub.c, 0, sizeof(uint64_t) * BBOX_MAX_NDIM);
+
+    memcpy(odsc.bb.lb.c, lb, sizeof(uint64_t) * ndim);
+    memcpy(odsc.bb.ub.c, ub, sizeof(uint64_t) * ndim);
+
+    strncpy(odsc.name, var_name, sizeof(odsc.name) - 1);
+    odsc.name[sizeof(odsc.name) - 1] = '\0';
+
     struct global_dimension odsc_gdim;
     set_global_dimension(&(client->dcg->gdim_list), var_name,
                          &(client->dcg->default_gdim), &odsc_gdim);
@@ -719,7 +787,7 @@ int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
     }
 
     get_server_address(client, &server_addr);
-    /* create handle */
+
     hret = margo_create(client->mid, server_addr, client->put_id, &handle);
     if(hret != HG_SUCCESS) {
         fprintf(stderr, "ERROR: (%s): margo_create() failed\n", __func__);
@@ -749,6 +817,152 @@ int dspaces_put(dspaces_client_t client, const char *var_name, unsigned int ver,
     margo_destroy(handle);
     margo_addr_free(client->mid, server_addr);
     return ret;
+}
+
+struct dspaces_put_req *dspaces_iput(dspaces_client_t client,
+                                     const char *var_name, unsigned int ver,
+                                     int elem_size, int ndim, uint64_t *lb,
+                                     uint64_t *ub, const void *data)
+{
+    hg_addr_t server_addr;
+    hg_return_t hret;
+    struct dspaces_put_req *ds_req, **ds_req_p;
+    int ret = dspaces_SUCCESS;
+
+    ds_req = malloc(sizeof(*ds_req));
+    obj_descriptor odsc = {.version = ver,
+                           .owner = {0},
+                           .st = st,
+                           .flags = 0,
+                           .size = elem_size,
+                           .bb = {
+                               .num_dims = ndim,
+                           }};
+
+    memset(odsc.bb.lb.c, 0, sizeof(uint64_t) * BBOX_MAX_NDIM);
+    memset(odsc.bb.ub.c, 0, sizeof(uint64_t) * BBOX_MAX_NDIM);
+
+    memcpy(odsc.bb.lb.c, lb, sizeof(uint64_t) * ndim);
+    memcpy(odsc.bb.ub.c, ub, sizeof(uint64_t) * ndim);
+
+    strncpy(odsc.name, var_name, sizeof(odsc.name) - 1);
+    odsc.name[sizeof(odsc.name) - 1] = '\0';
+
+    struct global_dimension odsc_gdim;
+    set_global_dimension(&(client->dcg->gdim_list), var_name,
+                         &(client->dcg->default_gdim), &odsc_gdim);
+
+    ds_req->in.odsc.size = sizeof(odsc);
+    ds_req->in.odsc.raw_odsc = (char *)(&odsc);
+    ds_req->in.odsc.gdim_size = sizeof(struct global_dimension);
+    ds_req->in.odsc.raw_gdim = (char *)(&odsc_gdim);
+    hg_size_t rdma_size = (elem_size)*bbox_volume(&odsc.bb);
+
+    DEBUG_OUT("sending object %s \n", obj_desc_sprint(&odsc));
+
+    hret = margo_bulk_create(client->mid, 1, (void **)&data, &rdma_size,
+                             HG_BULK_READ_ONLY, &ds_req->in.handle);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_bulk_create() failed\n", __func__);
+        return dspaces_PUT_NULL;
+    }
+
+    get_server_address(client, &server_addr);
+
+    hret =
+        margo_create(client->mid, server_addr, client->put_id, &ds_req->handle);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_create() failed\n", __func__);
+        margo_bulk_free(ds_req->in.handle);
+        return dspaces_PUT_NULL;
+    }
+
+    hret = margo_iforward(ds_req->handle, &ds_req->in, &ds_req->req);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_forward() failed\n", __func__);
+        margo_bulk_free(ds_req->in.handle);
+        margo_destroy(ds_req->handle);
+        return dspaces_PUT_NULL;
+    }
+
+    margo_addr_free(client->mid, server_addr);
+
+    ds_req->next = NULL;
+    ds_req_p = &client->put_reqs;
+    while(*ds_req_p) {
+        ds_req_p = &((*ds_req_p)->next);
+    }
+    *ds_req_p = ds_req;
+
+    return ds_req;
+}
+
+static int finalize_req(struct dspaces_put_req *req)
+{
+    bulk_out_t out;
+    int ret;
+    hg_return_t hret;
+
+    hret = margo_get_output(req->handle, &out);
+    if(hret != HG_SUCCESS) {
+        fprintf(stderr, "ERROR: (%s): margo_get_output() failed\n", __func__);
+        margo_bulk_free(req->in.handle);
+        margo_destroy(req->handle);
+        return dspaces_ERR_MERCURY;
+    }
+    ret = out.ret;
+    margo_free_output(req->handle, &out);
+    margo_bulk_free(req->in.handle);
+    margo_destroy(req->handle);
+
+    return ret;
+}
+
+int dspaces_check_put(dspaces_client_t client, struct dspaces_put_req *req,
+                      int wait)
+{
+    int flag;
+    struct dspaces_put_req **ds_req_p;
+    int ret;
+    hg_return_t hret;
+
+    if(wait) {
+        hret = margo_wait(req->req);
+        if(hret == HG_SUCCESS) {
+            ds_req_p = &client->put_reqs;
+            while(*ds_req_p && *ds_req_p != req) {
+                ds_req_p = &((*ds_req_p)->next);
+            }
+            if(!ds_req_p) {
+                fprintf(stderr,
+                        "ERROR: put req finished, but was not saved.\n");
+                return (-1);
+            } else {
+                ret = finalize_req(req);
+                *ds_req_p = req->next;
+                free(req);
+                return ret;
+            }
+        }
+    } else {
+        margo_test(req->req, &flag);
+        if(flag) {
+            ds_req_p = &client->put_reqs;
+            while(*ds_req_p && *ds_req_p != req) {
+                ds_req_p = &((*ds_req_p)->next);
+            }
+            if(!ds_req_p) {
+                fprintf(stderr,
+                        "ERROR: put req finished, but was not saved.\n");
+                return (-1);
+            } else {
+                ret = finalize_req(req);
+                *ds_req_p = req->next;
+                free(req);
+            }
+        }
+        return flag;
+    }
 }
 
 static int get_data(dspaces_client_t client, int num_odscs,

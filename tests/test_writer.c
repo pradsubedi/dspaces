@@ -13,7 +13,7 @@
 
 extern int test_put_run(int dims, int *npdim, uint64_t *spdim, int timestep,
                         size_t elem_size, int num_vars, int local_mode,
-                        int terminate, MPI_Comm gcomm);
+                        int terminate, int nonblock, MPI_Comm gcomm);
 
 void print_usage()
 {
@@ -21,7 +21,7 @@ void print_usage()
         stderr,
         "Usage: test_writer <dims> np[0] .. np[dims-1] sp[0] ... sp[dims-1] "
         "<timesteps> [-s <elem_size>] [-m (server|local)] [-c <var_count>] "
-        "[-t]\n"
+        "[-t] [-i]\n"
         "   dims              - number of data dimensions. Must be at least "
         "one\n"
         "   np[i]             - the number of processes in the ith dimension. "
@@ -36,12 +36,13 @@ void print_usage()
         "   -c <var_count>    - the number of variables written in each "
         "iteration. Defaults to one\n"
         "   -t                - send server termination after writing is "
-        "complete\n");
+        "complete\n"
+        "   -i                - use nonblocking puts (dspaces_iput)\n");
 }
 
 int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
                int *timestep, size_t *elem_size, int *num_vars,
-               int *store_local, int *terminate)
+               int *store_local, int *terminate, int *nonblock)
 {
     char **argp;
     int i;
@@ -51,6 +52,7 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
     *store_local = 0;
     *dims = 1;
     *terminate = 0;
+    *nonblock = 0;
     if(argc > 1) {
         *dims = atoi(argv[1]);
     }
@@ -105,6 +107,9 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
         } else if(strcmp(*argp, "-t") == 0) {
             *terminate = 1;
             argp++;
+        } else if(strcmp(*argp, "-i") == 0) {
+            *nonblock = 1;
+            argp++;
         } else {
             fprintf(stderr, "Unknown argument: %s\n", *argp);
             print_usage();
@@ -136,9 +141,10 @@ int main(int argc, char **argv)
                   // Default value is 1.
     int local_mode; // Optional: local storage mode flag
     int terminate;  // Optional: send terminate to server flag
+    int nonblock;   // Optional: use nonblocking puts
 
     if(parse_args(argc, argv, &dims, np, sp, &timestep, &elem_size, &num_vars,
-                  &local_mode, &terminate) != 0) {
+                  &local_mode, &terminate, &nonblock) != 0) {
         return (-1);
     }
 
@@ -167,7 +173,7 @@ int main(int argc, char **argv)
     // Run as data writer
 
     test_put_run(dims, np, sp, timestep, elem_size, num_vars, local_mode,
-                 terminate, gcomm);
+                 terminate, nonblock, gcomm);
 
     MPI_Barrier(gcomm);
     MPI_Finalize();

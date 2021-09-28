@@ -1,5 +1,6 @@
 #!/bin/bash -e
 export PATH="@CMAKE_RUNTIME_OUTPUT_DIRECTORY@:${PATH}"
+export LD_LIBRARY_PATH="@CMAKE_LIBRARY_OUTPUT_DIRECTORY@:${LD_LIBRARY_PATH}"
 
 storage_mode=$2
 storage_mode=${storage_mode:=server}
@@ -117,5 +118,16 @@ elif [ $1 -eq 10 ]; then
         if [ $? != 0 ] ; then
             exit 1
         fi
+        wait $writerproc
+elif [ $1 -eq 11 ]; then
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 4 dspaces_server sockets &
+        serverproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 4 test_writer 3 1 2 2 8 4 4 5 -m $storage_mode -t &
+        writerproc=$!
+        @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ 4 test_reader 3 1 2 2 8 4 4 5 -t
+        if [ $? != 0 ] ; then
+            exit 1
+        fi
+        wait $serverproc || exit 1
         wait $writerproc
 fi

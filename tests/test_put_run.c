@@ -21,8 +21,6 @@ static uint64_t sp[10] = {0};
 static uint64_t gdim[10] = {0};
 //# of interations
 static int timesteps_;
-//# of processors in the application
-static int npapp_;
 
 static int rank_, nproc_;
 
@@ -61,18 +59,18 @@ static int generate_nd(double *mnd, unsigned int ts, int dims)
 {
     // double value = 1.0*(rank_) + 0.0001*ts;
     double value = ts;
-    int i;
+    long i;
     uint64_t mnd_size = 1;
     for(i = 0; i < dims; i++)
         mnd_size *= sp[i];
     mnd_size = mnd_size * elem_size_ / sizeof(double);
-    for(i = 0; i < mnd_size; i++)
+    for(i = 0; i < (long)mnd_size; i++)
         *(mnd + i) = value;
     return 0;
 }
 
 static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
-                           int dims, int local_mode)
+                           int dims, int local_mode, int nonblock)
 {
     double **data_tab = (double **)malloc(sizeof(double *) * num_vars);
     char var_name[128];
@@ -117,12 +115,20 @@ static int couple_write_nd(dspaces_client_t ndph, unsigned int ts, int num_vars,
 
     for(i = 0; i < num_vars; i++) {
         sprintf(var_name, "mnd_%d", i);
-        if(!local_mode)
-            err = dspaces_put(ndph, var_name, ts, elem_size, dims, lb, ub,
-                              data_tab[i]);
-        else
+        if(!local_mode) {
+            if(!nonblock) {
+                err = dspaces_put(ndph, var_name, ts, elem_size, dims, lb, ub,
+                                  data_tab[i]);
+            } else {
+                dspaces_put_req_t ds_req;
+                ds_req = dspaces_iput(ndph, var_name, ts, elem_size, dims, lb,
+                                      ub, data_tab[i]);
+                dspaces_check_put(ndph, ds_req, 1);
+            }
+        } else {
             err = dspaces_put_local(ndph, var_name, ts, elem_size, dims, lb, ub,
                                     data_tab[i]);
+        }
         if(err != 0) {
             fprintf(stderr, "dspaces_put returned error %d", err);
             return err;
@@ -169,7 +175,7 @@ int set_gdims(dspaces_client_t client, int num_vars, int ndims, uint64_t *dims)
 
 int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
                  size_t elem_size, int num_vars, int local_mode, int terminate,
-                 MPI_Comm gcomm)
+                 int nonblock, MPI_Comm gcomm)
 {
     gcomm_ = gcomm;
     elem_size_ = elem_size;
@@ -213,8 +219,8 @@ int test_put_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     MPI_Comm_size(gcomm_, &nproc_);
 
     unsigned int ts;
-    for(ts = 1; ts <= timesteps_; ts++) {
-        ret = couple_write_nd(ndcl, ts, num_vars, ndims, local_mode);
+    for(ts = 1; (int)ts <= timesteps_; ts++) {
+        ret = couple_write_nd(ndcl, ts, num_vars, ndims, local_mode, nonblock);
         if(ret != 0) {
             ret = -1;
             goto error;

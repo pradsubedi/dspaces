@@ -23,8 +23,6 @@ static uint64_t sp[10] = {0};
 static uint64_t gdim[10] = {0};
 //# of interations
 static int timesteps_;
-//# of processors in the application
-static int npapp_;
 
 static int rank_, nproc_;
 
@@ -35,8 +33,6 @@ static struct timer timer_;
 static MPI_Comm gcomm_;
 
 static size_t elem_size_;
-
-static char transport_type_str_[256];
 
 static double *allocate_nd(int dims)
 {
@@ -85,9 +81,9 @@ int check_data(const char *var_name, double *buf, int num_elem, int rank,
     avg = sum / num_elem;
     if(cnt > 0) {
         fprintf(stderr,
-                "%s(): var= %s, rank= %d, ts= %d, "
+                "%s(): var= %s, rank= %d, ts= %d, avg=%lf, "
                 "error elem cnt= %d, total elem= %d\n",
-                __func__, var_name, rank, ts, cnt, num_elem);
+                __func__, var_name, rank, ts, avg, cnt, num_elem);
     }
 
     return cnt;
@@ -129,7 +125,7 @@ static int couple_read_nd(dspaces_client_t client, unsigned int ts,
             fprintf(stderr, "dspaces_get_meta() returned error %d\n", err);
             return err;
         }
-        if(next_ver != ts) {
+        if(next_ver != (int)ts) {
             fprintf(
                 stderr,
                 "Missing metadata step! Expected version %i, got version %i\n",
@@ -270,7 +266,6 @@ int test_get_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     dspaces_client_t ndcl = dspaces_CLIENT_NULL;
 
-    hg_return_t hret = HG_SUCCESS;
     int err, ret = 0;
 
     int i;
@@ -302,7 +297,7 @@ int test_get_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     get_gdims(ndcl, num_vars, ndims, gcomm);
 
     unsigned int ts;
-    for(ts = 1; ts <= timesteps_; ts++) {
+    for(ts = 1; (int)ts <= timesteps_; ts++) {
         err = couple_read_nd(ndcl, ts, num_vars, ndims, allocate);
         if(err != 0) {
             ret = -1;

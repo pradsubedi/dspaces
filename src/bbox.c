@@ -358,7 +358,8 @@ void bbox_to_intv2(const struct bbox *bb, uint64_t dim_virt, int bpd,
     struct bbox *bb_tab, *pbb;
     int bb_size, bb_head, bb_tail;
     struct intv *i_tab;
-    uint64_t n, i;
+    uint64_t n;
+    int i;
     int i_num, i_size, i_resize = 0;
 
     n = dim_virt;

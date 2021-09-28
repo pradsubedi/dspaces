@@ -74,7 +74,7 @@ static inline int list_empty(struct list_head *head)
 }
 
 #define list_entry(ptr, type, member)                                          \
-    (type *)((void *)ptr - offsetof(type, member))
+    (type *)((char *)ptr - offsetof(type, member))
 
 #define list_for_each(pos, head)                                               \
     for(pos = (head)->next; pos != (head); pos = pos->next)

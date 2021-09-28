@@ -23,8 +23,6 @@ static uint64_t sp[10] = {0};
 static uint64_t gdim[10] = {0};
 //# of interations
 static int timesteps_;
-//# of processors in the application
-static int npapp_;
 
 static int rank_, nproc_;
 
@@ -35,20 +33,6 @@ static struct timer timer_;
 static MPI_Comm gcomm_;
 
 static size_t elem_size_;
-
-static char transport_type_str_[256];
-
-static double *allocate_nd(int dims)
-{
-    double *tmp = NULL;
-    int i = 0;
-    uint64_t size = 1;
-    for(i = 0; i < dims; i++) {
-        size *= sp[i];
-    }
-    tmp = (double *)malloc(elem_size_ * size);
-    return tmp;
-}
 
 static void set_offset_nd(int rank, int dims)
 {
@@ -85,9 +69,9 @@ int check_data(const char *var_name, double *buf, int num_elem, int rank,
     avg = sum / num_elem;
     if(cnt > 0) {
         fprintf(stderr,
-                "%s(): var= %s, rank= %d, ts= %d, "
+                "%s(): var= %s, rank= %d, ts= %d, avg=%lf"
                 "error elem cnt= %d, total elem= %d\n",
-                __func__, var_name, rank, ts, cnt, num_elem);
+                __func__, var_name, rank, ts, avg, cnt, num_elem);
     }
 
     free(buf);
@@ -101,6 +85,7 @@ int check_data_cb(dspaces_client_t client, struct dspaces_req *req, void *rankv)
     int num_elem = 1;
     int i;
 
+    (void)client;
     fprintf(stderr, "executing %s on rank %d for version %d.\n", __func__, rank,
             req->ver);
 
@@ -118,7 +103,6 @@ static int couple_sub_nd(dspaces_client_t client, unsigned int ts, int num_vars,
     char var_name[128];
     int i;
     int ret = 0;
-    int err = 0;
     uint64_t dims_size = 1;
     int elem_size = elem_size_;
     uint64_t lb[10] = {0}, ub[10] = {0};
@@ -227,7 +211,6 @@ int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     dspaces_client_t ndcl = dspaces_CLIENT_NULL;
 
-    hg_return_t hret = HG_SUCCESS;
     int err, ret = 0;
 
     int i;
@@ -259,7 +242,7 @@ int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
     sub_handles = malloc(sizeof(*sub_handles) * timesteps_);
 
     unsigned int ts;
-    for(ts = 1; ts <= timesteps_; ts++) {
+    for(ts = 1; (int)ts <= timesteps_; ts++) {
         err = couple_sub_nd(ndcl, ts, num_vars, ndims, &sub_handles[ts - 1]);
         if(err != 0) {
             fprintf(stderr, "couple_sub_nd failed on ts %d with %d.\n", ts,
@@ -268,7 +251,7 @@ int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
         }
     }
 
-    for(ts = 1; ts <= timesteps_; ts++) {
+    for(ts = 1; (int)ts <= timesteps_; ts++) {
         err = dspaces_check_sub(ndcl, sub_handles[ts - 1], 1, &result);
         if((err != DSPACES_SUB_DONE) || result > 0) {
             fprintf(stderr, "subscription tailed for ts %d with %d.\n", ts,
@@ -294,11 +277,6 @@ int test_sub_run(int ndims, int *npdim, uint64_t *spdim, int timestep,
 
     fprintf(stdout, "TIMING_PERF Close_server_connection peer %d time= %lf\n",
             rank_, tm_end - tm_st);
-
-    return ret;
-
-error:
-    dspaces_fini(ndcl);
 
     return ret;
 }

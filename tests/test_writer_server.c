@@ -14,7 +14,7 @@
 
 extern int test_put_run(int dims, int *npdim, uint64_t *spdim, int timestep,
                         size_t elem_size, int num_vars, int local_mode,
-                        int terminate, MPI_Comm gcomm);
+                        int terminate, int nonblock, MPI_Comm gcomm);
 
 void print_usage()
 {
@@ -40,12 +40,14 @@ void print_usage()
         "   -c <var_count>    - the number of variables written in each "
         "iteration. Defaults to one\n"
         "   -t                - send server termination after writing is "
-        "complete\n");
+        "complete\n"
+        "   -i                - use nonblocking puts (dspaces_iput)\n");
+        
 }
 
 int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
                int *timestep, size_t *elem_size, int *num_vars,
-               int *store_local, int *terminate)
+               int *store_local, int *terminate, int *nonblock)
 {
     char **argp;
     int i;
@@ -55,6 +57,7 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
     *store_local = 0;
     *dims = 1;
     *terminate = 0;
+    *nonblock = 0;
     if(argc > 1) {
         *dims = atoi(argv[2]);
     }
@@ -109,6 +112,9 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
         } else if(strcmp(*argp, "-t") == 0) {
             *terminate = 1;
             argp++;
+        } else if(strcmp(*argp, "-i") == 0) {
+            *nonblock = 1;
+            argp++;
         } else {
             fprintf(stderr, "Unknown argument: %s\n", *argp);
             print_usage();
@@ -126,7 +132,7 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
 int main(int argc, char **argv)
 {
     char *listen_addr_str;
-    int dims, timestep, num_vars, local_mode, terminate, npapp, nprocs;
+    int dims, timestep, num_vars, local_mode, terminate, nonblock, npapp, nprocs;
     int np[10] = {0};
     uint64_t sp[10] = {0};
     size_t elem_size;
@@ -136,7 +142,7 @@ int main(int argc, char **argv)
     int i, ret;
 
     if(parse_args(argc, argv, &dims, np, sp, &timestep, &elem_size, &num_vars,
-                  &local_mode, &terminate) != 0) {
+                  &local_mode, &terminate, &nonblock) != 0) {
         return (-1);
     }
 
@@ -169,7 +175,7 @@ int main(int argc, char **argv)
         return ret;
 
     test_put_run(dims, np, sp, timestep, elem_size, num_vars, local_mode,
-                 terminate, gcomm);
+                 terminate, nonblock, gcomm);
 
     MPI_Barrier(gcomm);
     if(rank == 0) {

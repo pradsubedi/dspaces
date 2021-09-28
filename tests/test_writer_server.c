@@ -42,7 +42,6 @@ void print_usage()
         "   -t                - send server termination after writing is "
         "complete\n"
         "   -i                - use nonblocking puts (dspaces_iput)\n");
-        
 }
 
 int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
@@ -132,7 +131,8 @@ int parse_args(int argc, char **argv, int *dims, int *npdim, uint64_t *spdim,
 int main(int argc, char **argv)
 {
     char *listen_addr_str;
-    int dims, timestep, num_vars, local_mode, terminate, nonblock, npapp, nprocs;
+    int dims, timestep, num_vars, local_mode, terminate, nonblock, npapp,
+        nprocs;
     int np[10] = {0};
     uint64_t sp[10] = {0};
     size_t elem_size;

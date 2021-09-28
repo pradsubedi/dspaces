@@ -1,5 +1,6 @@
 #!/bin/bash -e
 export PATH="@CMAKE_RUNTIME_OUTPUT_DIRECTORY@:${PATH}"
+export LD_LIBRARY_PATH="@CMAKE_LIBRARY_OUTPUT_DIRECTORY@:${LD_LIBRARY_PATH}"
 
 storage_mode=$2
 storage_mode=${storage_mode:=server}
